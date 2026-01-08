@@ -37,7 +37,7 @@ Example
 from enum import Enum
 from typing import Dict, Optional, T, Tuple, Type
 
-from picomidi import BitMask
+from picomidi.core.bitmask import BitMask
 from picomidi.constant import Midi
 from picomidi.sysex.parameter.map import map_range
 
