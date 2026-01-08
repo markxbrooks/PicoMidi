@@ -1,8 +1,7 @@
 """
 Standard MIDI Protocol Constants
 """
-
-from picomidi.core.channel_legacy import MidiChannel
+from picomidi import MidiChannel
 from picomidi.core.tempo import MidiTempo
 from picomidi.core.value import MidiValue
 from picomidi.messages import (Aftertouch, ControlChange, MidiNote, PitchBend,
