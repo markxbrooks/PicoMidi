@@ -1,6 +1,6 @@
 """Setup script for PicoMidi."""
 
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 # Read the README file for the long description
 with open("README.md", "r", encoding="utf-8") as fh:
@@ -8,6 +8,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 # Read version from package
 import re
+
 with open("picomidi/__init__.py", "r", encoding="utf-8") as fh:
     version_match = re.search(r'^__version__ = ["\']([^"\']*)["\']', fh.read(), re.MULTILINE)
     if version_match:

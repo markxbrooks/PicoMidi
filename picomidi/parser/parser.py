@@ -9,13 +9,8 @@ from typing import Iterator, List, Optional
 
 from picomidi.core.channel import Channel
 from picomidi.core.status import Status
-from picomidi.core.types import (
-    ControlValue,
-    Note,
-    PitchBendValue,
-    ProgramNumber,
-    Velocity,
-)
+from picomidi.core.types import (ControlValue, Note, PitchBendValue,
+                                 ProgramNumber, Velocity)
 from picomidi.message.base import Message
 from picomidi.message.channel_voice.control_change import ControlChange
 from picomidi.message.channel_voice.note_off import NoteOff
