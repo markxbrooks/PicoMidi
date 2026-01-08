@@ -1,8 +1,21 @@
+<div align="center">
+
+![PicoMidi Logo](resources/picomidi_logo_640.png)
+
 # PicoMidi
 
-A lightweight, focused MIDI library for Python.
+**A lightweight, focused MIDI library for Python**
 
-PicoMidi provides core MIDI protocol functionality with a clean, type-safe API.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+
+</div>
+
+---
+
+## Overview
+
+PicoMidi provides core MIDI protocol functionality with a clean, type-safe API. Built for developers who need reliable MIDI message handling without the bloat.
 
 ## Features
 
@@ -108,7 +121,7 @@ ms = ticks_to_milliseconds(
 )  # 1000.0 (1 second)
 ```
 
-## Structure
+## Project Structure
 
 ```
 picomidi/
@@ -140,5 +153,12 @@ picomidi/
 
 ## License
 
-[MIT License]
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
+---
+
+<div align="center">
+
+Made with ❤️ for the MIDI community
+
+</div>
