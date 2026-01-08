@@ -12,6 +12,7 @@ from picomidi.messages.pitch_bend import PitchBend
 from picomidi.messages.program_change import ProgramChange
 from picomidi.messages.song import Song
 from picomidi.messages.sysex import SysExByte
+from picomidi.misc import MidiMisc
 
 
 class Midi:
@@ -27,11 +28,4 @@ class Midi:
     PITCH_BEND = PitchBend
     TEMPO = MidiTempo
     CHANNEL = MidiChannel
-
-    NOTES_NUMBER = 128  # Standard MIDI has 128 notes (0-127)
-    TIME_CODE = 0xF1
-    TUNE_REQUEST = 0xF6
-
-    CLOCK = 0xF8
-    ACTIVE_SENSING = 0xFE
-    SYSTEM_RESET = 0xFF
+    MISC = MidiMisc
