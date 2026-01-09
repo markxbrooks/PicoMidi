@@ -13,6 +13,8 @@ from picomidi.messages.program_change import ProgramChange
 from picomidi.messages.song import Song
 from picomidi.messages.sysex import SysExByte
 from picomidi.misc import MidiMisc
+from picomidi.cc.rpn import RegisteredParameterNumber
+from picomidi.cc.nrpn import NonRegisteredParameterNumber
 
 
 class Midi:
@@ -29,3 +31,7 @@ class Midi:
     TEMPO = MidiTempo
     CHANNEL = MidiChannel
     MISC = MidiMisc
+    NRPN = RegisteredParameterNumber
+    RPN = NonRegisteredParameterNumber
+
+    
