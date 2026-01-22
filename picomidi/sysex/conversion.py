@@ -1,6 +1,6 @@
 from typing import Optional
 
-from jdxi_editor.log.logger import Logger as log
+from decologr import Decologr as log
 
 
 def bytes_to_hex(byte_list: list, prefix: str = "F0") -> Optional[str]:
