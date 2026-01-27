@@ -5,7 +5,7 @@ This module provides functions to format MIDI messages
 for display, logging, and debugging.
 """
 
-from typing import List
+from typing import Iterable, List
 
 from picomidi.core.status import Status
 from picomidi.message.base import Message
@@ -92,3 +92,37 @@ def get_message_type_name(status: int) -> str:
         return type_names.get(status, f"Unknown System Realtime (0x{status:02X})")
 
     return f"Unknown (0x{status:02X})"
+
+
+def format_message_to_hex_string(message: Iterable[int]) -> str:
+    """
+    Convert a list or iterable of MIDI byte values to a space-separated hex string.
+
+    :param message: Iterable of integers (byte values)
+    :return: Space-separated hex string (e.g., "F0 41 10 00 00 00 0E F7")
+    """
+    # Safely convert to int for formatting (handles strings, enums, floats, etc.)
+    def safe_int(val):
+        if isinstance(val, int):
+            return val
+        if hasattr(val, 'value'):  # Handle enums
+            enum_val = val.value
+            return int(enum_val) if not isinstance(enum_val, int) else enum_val
+        try:
+            return int(float(val))  # Handle floats and strings
+        except (ValueError, TypeError):
+            return 0
+    
+    return " ".join(f"{safe_int(x):02X}" for x in message)
+
+
+def int_to_hex(value: int) -> str:
+    """
+    Convert an integer value to a hexadecimal string representation.
+
+    The result is formatted in uppercase and without the '0x' prefix.
+
+    :param value: Integer value to convert
+    :return: Hexadecimal string representation (e.g., "FF" for 255)
+    """
+    return hex(value)[2:].upper()
