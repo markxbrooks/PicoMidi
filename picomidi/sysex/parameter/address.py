@@ -48,6 +48,7 @@ class AddressParameter(Enum):
     """
 
     def __init__(self, address: int, min_val: int, max_val: int):
+        self._display_name: str | None = None
         self.CONVERSION_OFFSETS: Dict[str, int] = {}
         self.address = address
         self.min_val = min_val
@@ -117,6 +118,8 @@ class AddressParameter(Enum):
 
         :return: str formatted display name
         """
+        if getattr(self, "_display_name", None) is not None:
+            return self._display_name
         return self.name.replace("_", " ").title()
 
     def validate_value(self, value: int) -> int:
