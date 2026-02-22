@@ -12,3 +12,4 @@ class MidoMessageType:
     PITCH_WHEEL: str = "pitchwheel"
     AFTERTOUCH: str = "aftertouch"
     POLYTOUCH: str = "polytouch"
+    SET_TEMPO: str = "set_tempo"
