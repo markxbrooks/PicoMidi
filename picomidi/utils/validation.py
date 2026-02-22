@@ -60,7 +60,7 @@ def validate_channel(channel: int) -> bool:
 
 def validate_channel_display(channel: int) -> bool:
     """
-    Validate MIDI channel number (1-based display).
+    Validate MIDI channel number (1-based digital).
 
     :param channel: Channel number to validate
     :return: True if valid (1-16)

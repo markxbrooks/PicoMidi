@@ -36,7 +36,7 @@ class Channel(IntEnum):
     @classmethod
     def from_display(cls, channel: int) -> "Channel":
         """
-        Convert 1-based display channel to 0-based Channel enum.
+        Convert 1-based digital channel to 0-based Channel enum.
 
         :param channel: Display channel number (1-16)
         :return: Channel enum value
@@ -48,7 +48,7 @@ class Channel(IntEnum):
 
     def to_display(self) -> int:
         """
-        Convert to 1-based display channel number.
+        Convert to 1-based digital channel number.
 
         :return: Display channel number (1-16)
         """

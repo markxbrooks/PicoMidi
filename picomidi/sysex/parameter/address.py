@@ -5,16 +5,16 @@ Module for representing and managing synthesizer parameters as enum values.
 
 This module defines the `SynthParameter` enum, which models the various parameters
 of address synthesizer with associated addresses and valid value ranges. It includes methods
-for value validation, display name formatting, and lookups by address or name.
+for value validation, digital name formatting, and lookups by address or name.
 
 Classes:
     SynthParameter (Enum): Enum class representing synthesizer parameters with associated
                             addresses and valid value ranges. Provides methods for validating
-                            parameter values, retrieving display names, and finding parameters
+                            parameter values, retrieving digital names, and finding parameters
                             by their address or name.
 
 Methods:
-    display_name (property): Returns the display name of the parameter by formatting
+    display_name (property): Returns the digital name of the parameter by formatting
                              the enum name with spaces and title casing.
     validate_value(value: int): Validates the provided value against the parameter's valid
                                 range and returns the value if it is valid.
@@ -113,9 +113,9 @@ class AddressParameter(Enum):
     @property
     def display_name(self) -> str:
         """
-        Returns the display name of the parameter by formatting the enum name with spaces
+        Returns the digital name of the parameter by formatting the enum name with spaces
 
-        :return: str formatted display name
+        :return: str formatted digital name
         """
         return self.name.replace("_", " ").title()
 
@@ -196,19 +196,19 @@ class AddressParameter(Enum):
 
     def convert_to_midi(self, slider_value: int) -> int:
         """
-        Convert from display value to MIDI value
+        Convert from digital value to MIDI value
 
-        :param slider_value: int The display value
+        :param slider_value: int The digital value
         :return: int The MIDI value
         """
         return self.convert_value(slider_value)
 
     def convert_from_midi(self, midi_value: int) -> int:
         """
-        Convert from MIDI value to display value
+        Convert from MIDI value to digital value
 
         :param midi_value: int The MIDI value
-        :return: int The display value
+        :return: int The digital value
         """
         return self.convert_value(midi_value, reverse=True)
 
