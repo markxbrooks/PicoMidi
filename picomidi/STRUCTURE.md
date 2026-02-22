@@ -118,11 +118,11 @@ class Channel(IntEnum):
     
     @classmethod
     def from_display(cls, channel: int) -> 'Channel':
-        """Convert 1-based display channel to 0-based"""
+        """Convert 1-based digital channel to 0-based"""
         return cls(channel - 1)
     
     def to_display(self) -> int:
-        """Convert to 1-based display channel"""
+        """Convert to 1-based digital channel"""
         return self.value + 1
 ```
 

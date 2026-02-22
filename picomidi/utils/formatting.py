@@ -2,7 +2,7 @@
 MIDI Message Formatting
 
 This module provides functions to format MIDI messages
-for display, logging, and debugging.
+for digital, logging, and debugging.
 """
 
 from typing import Iterable, List
@@ -13,7 +13,7 @@ from picomidi.message.base import Message
 
 def format_message(message: Message, include_bytes: bool = True) -> str:
     """
-    Format a MIDI message for display.
+    Format a MIDI message for digital.
 
     :param message: MIDI message to format
     :param include_bytes: Whether to include hex bytes

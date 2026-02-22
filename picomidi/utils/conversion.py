@@ -161,7 +161,7 @@ def midi_value_to_fraction(
     """
     Convert a MIDI value (0-127) to a fractional value (0.0-1.0).
 
-    Useful for mapping MIDI CC values to normalized ranges for UI display.
+    Useful for mapping MIDI CC values to normalized ranges for UI digital.
 
     :param midi_value: MIDI CC value (0-127)
     :param minimum: Minimum possible fractional value (default: 0.0)
