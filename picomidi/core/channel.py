@@ -7,6 +7,8 @@ MIDI channels are 1-based in user-facing APIs but 0-based internally.
 
 from enum import IntEnum
 
+Channels: int = 16
+
 
 class Channel(IntEnum):
     """
@@ -32,6 +34,10 @@ class Channel(IntEnum):
     CH14 = 13
     CH15 = 14
     CH16 = 15
+
+    TOTAL_JDXI_CHANNELS = 4
+
+    TOTAL_CHANNELS = 16
 
     @classmethod
     def from_display(cls, channel: int) -> "Channel":

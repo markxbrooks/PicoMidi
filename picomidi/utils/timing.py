@@ -17,7 +17,7 @@ def bpm_to_microseconds_per_quarter(bpm: float) -> int:
     """
     if bpm <= 0:
         raise ValueError(f"BPM must be positive, got {bpm}")
-    return int(60_000_000 / bpm)
+    return int(MidiTempo.MICROSECONDS_PER_MINUTE / bpm)
 
 
 def microseconds_per_quarter_to_bpm(usec_per_quarter: int) -> float:
@@ -31,7 +31,7 @@ def microseconds_per_quarter_to_bpm(usec_per_quarter: int) -> float:
         raise ValueError(
             f"Microseconds per quarter must be positive, got {usec_per_quarter}"
         )
-    return 60_000_000 / usec_per_quarter
+    return MidiTempo.MICROSECONDS_PER_MINUTE / usec_per_quarter
 
 
 def ticks_to_milliseconds(ticks: int, ticks_per_beat: int, bpm: float) -> float:
@@ -103,7 +103,7 @@ def ticks_to_seconds_with_tempo(
     :param ticks_per_beat: Ticks per quarter note (TPQN, typically 480 or 960)
     :return: Duration in seconds
     """
-    return (tempo / 1_000_000.0) * (ticks / ticks_per_beat)
+    return (tempo / float(MidiTempo.MICROSECONDS_PER_SECOND)) * (ticks / ticks_per_beat)
 
 
 def seconds_to_ticks_with_tempo(
@@ -119,4 +119,4 @@ def seconds_to_ticks_with_tempo(
     :param ticks_per_beat: Ticks per quarter note (TPQN)
     :return: Number of MIDI ticks
     """
-    return int((seconds * 1_000_000.0 / tempo) * ticks_per_beat)
+    return int((seconds * float(MidiTempo.MICROSECONDS_PER_SECOND) / tempo) * ticks_per_beat)
