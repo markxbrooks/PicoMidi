@@ -24,11 +24,26 @@ def milliseconds_per_note(bpm: int | float, division: int = 4) -> float:
     2 = eighth note
     4 = 16th note
     """
-    if bpm is None:
-        raise ValueError("BPM must not be None")
     if bpm <= 0:
         raise ValueError("BPM must be positive")
     if division <= 0:
         raise ValueError("division must be positive")
     ms_per_step = (MidiTempo.MILLISECONDS_PER_MINUTE / bpm) / division  # 4 = ms per 16th note
     return ms_per_step
+
+
+def milliseconds_per_note_fraction(bpm: float, note_fraction: float) -> float:
+    """
+    Calculate milliseconds for a note duration.
+
+    note_fraction:
+        1.0   = quarter note
+        0.5   = eighth
+        0.25  = sixteenth
+        1/3   = eighth triplet
+    """
+    if bpm <= 0:
+        raise ValueError("BPM must be positive")
+    if note_fraction <= 0:
+        raise ValueError("note_fraction must be positive")
+    return (MidiTempo.MILLISECONDS_PER_MINUTE / bpm) * note_fraction
