@@ -1,5 +1,5 @@
 """
-MIDI tempo and timing constants.
+MIDI tempo and timing constants and conversion.
 """
 
 
