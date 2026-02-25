@@ -1,6 +1,9 @@
 """
 MIDI tempo and timing constants and conversion.
 """
+from typing import Any
+
+from mido import MidiTrack
 
 
 class MidiTempo:
@@ -47,3 +50,13 @@ def milliseconds_per_note_fraction(bpm: float, note_fraction: float) -> float:
     if note_fraction <= 0:
         raise ValueError("note_fraction must be positive")
     return (MidiTempo.MILLISECONDS_PER_MINUTE / bpm) * note_fraction
+
+
+def convert_absolute_time_to_delta_time(events: list[Any], track: MidiTrack):
+    """Convert absolute time → delta time"""
+    last_time = 0
+    for abs_time, msg in events:
+        delta = abs_time - last_time
+        msg.time = delta
+        track.append(msg)
+        last_time = abs_time
