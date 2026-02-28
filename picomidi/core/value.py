@@ -8,8 +8,8 @@ from picomidi.values import MaxValues, MinValues
 class MidiValue:
     """Common MIDI value constants."""
 
-    MAX = MaxValues
-    MIN = MinValues
+    max = MaxValues
+    min = MinValues
     ZERO = 0x00
     ON = 0x01
     OFF = 0x00
@@ -33,7 +33,7 @@ class MidiValue:
         :param value: The value to validate.
         :return: True if the value is within range, False otherwise.
         """
-        return 0 <= value <= MidiValue.MAX.SEVEN_BIT
+        return 0 <= value <= MidiValue.max.SEVEN_BIT
 
     @staticmethod
     def is_within_sixteen_bit_range(value, signed=False):
@@ -49,4 +49,4 @@ class MidiValue:
                 <= value
                 <= MidiValue.SignedSixteenBit.MAX
             )
-        return 0 <= value <= MidiValue.MAX.SIXTEEN_BIT
+        return 0 <= value <= MidiValue.max.SIXTEEN_BIT

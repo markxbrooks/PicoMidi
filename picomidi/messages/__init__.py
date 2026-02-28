@@ -10,7 +10,7 @@ from picomidi.messages.note import MidiNote
 from picomidi.messages.pitch_bend import PitchBend
 from picomidi.messages.program_change import ProgramChange
 from picomidi.messages.song import Song
-from picomidi.messages.sysex import SysExByte
+from picomidi.messages.sysex import MidiSysExByte
 
 __all__ = [
     "Aftertouch",
@@ -19,5 +19,5 @@ __all__ = [
     "PitchBend",
     "ProgramChange",
     "Song",
-    "SysExByte",
+    "MidiSysExByte",
 ]

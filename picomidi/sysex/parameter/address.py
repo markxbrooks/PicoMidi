@@ -171,7 +171,7 @@ class AddressParameter(Enum):
         :param partial_number: int
         :return: int default area to be subclassed
         """
-        return Midi.VALUE.ZERO, Midi.VALUE.ZERO
+        return Midi.value.ZERO, Midi.value.ZERO
 
     def convert_value(self, value: int, reverse: bool = False) -> int:
         """
@@ -245,7 +245,7 @@ class AddressParameter(Enum):
         :return: tuple[int, int, int] A 3-byte offset.
         """
         value = self.address
-        umb = Midi.VALUE.ZERO  # Default Upper Middle Byte
+        umb = Midi.value.ZERO  # Default Upper Middle Byte
         lmb = (value >> 8) & BitMask.FULL_BYTE  # Extract LMB
         lsb = value & BitMask.FULL_BYTE  # Extract LSB
         return umb, lmb, lsb

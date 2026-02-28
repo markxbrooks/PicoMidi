@@ -48,13 +48,13 @@ class TestRolandSysExMessage(unittest.TestCase):
         result = msg.to_list()
 
         # Should start with F0 (SysEx start)
-        self.assertEqual(result[0], Midi.SYSEX.START)
+        self.assertEqual(result[0], Midi.sysex.START)
         # Should have manufacturer ID 0x41
         self.assertEqual(result[1], 0x41)
         # Should have device ID
         self.assertEqual(result[2], 0x10)
         # Should end with F7 (SysEx end)
-        self.assertEqual(result[-1], Midi.SYSEX.END)
+        self.assertEqual(result[-1], Midi.sysex.END)
         # Should have checksum before end
         self.assertIsInstance(result[-2], int)
         self.assertTrue(0 <= result[-2] <= 0x7F)
@@ -72,9 +72,9 @@ class TestRolandSysExMessage(unittest.TestCase):
         result = msg.to_bytes()
 
         self.assertIsInstance(result, bytes)
-        self.assertEqual(result[0], Midi.SYSEX.START)
+        self.assertEqual(result[0], Midi.sysex.START)
         self.assertEqual(result[1], 0x41)
-        self.assertEqual(result[-1], Midi.SYSEX.END)
+        self.assertEqual(result[-1], Midi.sysex.END)
 
     def test_from_bytes_parsing(self):
         """Test parsing a message from bytes."""

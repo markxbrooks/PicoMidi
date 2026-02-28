@@ -12,11 +12,10 @@ RPN messages are sequences of Control Change messages used to set
 from dataclasses import dataclass
 from typing import List
 
-from picomidi.constant import Midi
+from picomidi.core.value import MidiValue
 from picomidi.core.bitmask import BitMask
 from picomidi.core.channel import Channel
 from picomidi.core.status import Status
-from picomidi.core.types import ControlValue
 from picomidi.message.base import Message
 from picomidi.utils.validation import validate_14bit_value
 
@@ -55,9 +54,9 @@ class RPN(Message):
                     f"RPN value must be between 0 and 16383, got {self.value}"
                 )
         else:
-            if not 0 <= self.value <= Midi.VALUES.MAX.SEVEN_BIT:
+            if not 0 <= self.value <= MidiValue.max.SEVEN_BIT:
                 raise ValueError(
-                    f"RPN value must be between 0 and {Midi.VALUES.MAX.SEVEN_BIT}, got {self.value}"
+                    f"RPN value must be between 0 and {MidiValue.max.SEVEN_BIT}, got {self.value}"
                 )
 
     def to_bytes(self) -> bytes:

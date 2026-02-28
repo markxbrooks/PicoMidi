@@ -3,7 +3,7 @@ System Exclusive (SysEx) MIDI message constants.
 """
 
 
-class SysExByte:
+class MidiSysExByte:
     """System Exclusive (SysEx) MIDI message constants."""
 
     START = 0xF0

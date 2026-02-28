@@ -44,11 +44,11 @@ class ControlChange(Message):
     def to_list(self) -> List[int]:
         """Convert to list of integers."""
         status = Status.make_channel_voice(Status.CONTROL_CHANGE, self.channel.value)
-        return [status, self.controller, self.value.value]
+        return [status, self.controller, self.value]
 
     def to_bytes(self) -> bytes:
         """Convert to bytes."""
         return bytes(self.to_list())
 
     def __repr__(self) -> str:
-        return f"ControlChange(channel={self.channel.to_display()}, controller={self.controller}, value={self.value.value})"
+        return f"ControlChange(channel={self.channel.to_display()}, controller={self.controller}, value={self.value})"

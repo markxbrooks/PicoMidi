@@ -11,7 +11,7 @@ from picomidi.messages.note import MidiNote
 from picomidi.messages.pitch_bend import PitchBend
 from picomidi.messages.program_change import ProgramChange
 from picomidi.messages.song import Song
-from picomidi.messages.sysex import SysExByte
+from picomidi.messages.sysex import MidiSysExByte
 from picomidi.misc import MidiMisc
 from picomidi.cc.rpn import RegisteredParameterNumber
 from picomidi.cc.nrpn import NonRegisteredParameterNumber
@@ -20,18 +20,18 @@ from picomidi.cc.nrpn import NonRegisteredParameterNumber
 class Midi:
     """Standard MIDI protocol constants."""
 
-    VALUE = MidiValue
-    NOTE = MidiNote
-    SYSEX = SysExByte
-    CC = ControlChange
-    PC = ProgramChange
-    AFTERTOUCH = Aftertouch
-    SONG = Song
-    PITCH_BEND = PitchBend
-    TEMPO = MidiTempo
-    CHANNEL = MidiChannel
-    MISC = MidiMisc
-    NRPN = RegisteredParameterNumber
-    RPN = NonRegisteredParameterNumber
+    value = MidiValue
+    note = MidiNote
+    sysex = MidiSysExByte
+    cc = ControlChange
+    pc = ProgramChange
+    aftertouch = Aftertouch
+    song = Song
+    pitch_bend = PitchBend
+    tempo = MidiTempo
+    channel = MidiChannel
+    misc = MidiMisc
+    nrpn = RegisteredParameterNumber
+    rpn = NonRegisteredParameterNumber
 
     

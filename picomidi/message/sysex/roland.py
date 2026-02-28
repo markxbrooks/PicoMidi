@@ -20,9 +20,8 @@ Where:
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
-from picomidi.constant import Midi
 from picomidi.message.base import Message
 from picomidi.sysex.conversion import calculate_checksum
 
@@ -206,9 +205,10 @@ class RolandSysExMessage(Message):
                 return int(float(val))  # Handle floats and strings
             except (ValueError, TypeError):
                 return 0
-        
+
+        from picomidi import MidiSysExByte
         msg = [
-            Midi.SYSEX.START,  # F0
+            MidiSysExByte.START,  # F0
             safe_int(self.manufacturer_id),  # 0x41 (Roland)
             safe_int(self.device_id),
         ]
@@ -217,7 +217,7 @@ class RolandSysExMessage(Message):
         msg.extend([safe_int(b) for b in self.address])  # 4 bytes
         msg.extend([safe_int(b) for b in self.data])  # Ensure all data bytes are integers
         msg.append(self.calculate_checksum())
-        msg.append(Midi.SYSEX.END)  # F7
+        msg.append(MidiSysExByte.END)  # F7
         return msg
 
     def to_bytes(self) -> bytes:
@@ -237,15 +237,16 @@ class RolandSysExMessage(Message):
         :return: Parsed RolandSysExMessage instance
         :raises ValueError: If message format is invalid
         """
+        from picomidi import MidiSysExByte
         if len(data) < 13:  # Minimum: F0 + 41 + dev + model(4) + cmd + addr(4) + chk + F7
             raise ValueError(
                 f"Message too short: expected at least 13 bytes, got {len(data)}"
             )
 
-        if data[0] != Midi.SYSEX.START:
+        if data[0] != MidiSysExByte.START:
             raise ValueError(f"Invalid start byte: expected 0xF0, got 0x{data[0]:02X}")
 
-        if data[-1] != Midi.SYSEX.END:
+        if data[-1] != MidiSysExByte.END:
             raise ValueError(f"Invalid end byte: expected 0xF7, got 0x{data[-1]:02X}")
 
         manufacturer_id = data[1]

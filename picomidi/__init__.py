@@ -35,7 +35,7 @@ from picomidi.messages.pitch_bend import PitchBend as PitchBendStatus
 from picomidi.messages.program_change import \
     ProgramChange as ProgramChangeStatus
 from picomidi.messages.song import Song
-from picomidi.messages.sysex import SysExByte
+from picomidi.messages.sysex import MidiSysExByte
 # Parser
 from picomidi.parser.parser import Parser
 # RPN/NRPN
@@ -74,7 +74,7 @@ __all__ = [
     "PitchBendStatus",
     "ProgramChangeStatus",
     "Song",
-    "SysExByte",
+    "MidiSysExByte",
     # Constants
     "Midi",
     # Parser
