@@ -6,7 +6,7 @@ This module is deprecated. Use picomidi.messages.sysex instead.
 
 import warnings
 
-from picomidi.messages.sysex import SysExByte
+from picomidi.messages.sysex import MidiSysExByte
 
 warnings.warn(
     "picomidi.sysex.byte is deprecated; use picomidi.messages.sysex instead.",
