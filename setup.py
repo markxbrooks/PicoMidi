@@ -24,7 +24,7 @@ setup(
     description="A lightweight, focused MIDI library for Python",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/picomidi",  # Update with your repository URL
+    url="https://github.com/markxbrooks/picomidi",  # Update with your repository URL
     packages=find_packages(exclude=["tests", "*.tests", "*.tests.*", "tests.*"]),
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -32,8 +32,6 @@ setup(
         "Topic :: Multimedia :: Sound/Audio :: MIDI",
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
