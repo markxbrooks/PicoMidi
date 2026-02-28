@@ -8,7 +8,7 @@ on a MIDI channel.
 from typing import List
 
 from picomidi.core.channel import Channel
-from picomidi.core.status import Status
+from picomidi.core.midistatus import MidiStatus
 from picomidi.core.types import ProgramNumber
 from picomidi.message.base import Message
 
@@ -34,7 +34,7 @@ class ProgramChange(Message):
 
     def to_list(self) -> List[int]:
         """Convert to list of integers."""
-        status = Status.make_channel_voice(Status.PROGRAM_CHANGE, self.channel.value)
+        status = MidiStatus.make_channel_voice(MidiStatus.PROGRAM_CHANGE, self.channel.value)
         return [status, self.program.value]
 
     def to_bytes(self) -> bytes:

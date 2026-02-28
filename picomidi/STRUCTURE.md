@@ -198,26 +198,28 @@ class Message(ABC):
 ```
 
 ### `message/channel_voice/note_on.py`
+
 ```python
 """Note On Message"""
 
 from picomidi.message.base import Message
 from picomidi.core.types import Note, Velocity
-from picomidi.core.status import Status
+from picomidi.core.status import MidiStatus
 from picomidi.core.channel import Channel
+
 
 class NoteOn(Message):
     """MIDI Note On message"""
-    
+
     def __init__(self, channel: Channel, note: Note, velocity: Velocity):
         self.channel = channel
         self.note = note
         self.velocity = velocity
-    
+
     def to_list(self) -> List[int]:
-        status = Status.NOTE_ON | self.channel.value
+        status = MidiStatus.NOTE_ON | self.channel.value
         return [status, self.note.value, self.velocity.value]
-    
+
     def to_bytes(self) -> bytes:
         return bytes(self.to_list())
 ```
@@ -291,7 +293,7 @@ class Parser:
 
 ```python
 from picomidi import NoteOn, Channel, Note, Velocity
-from picomidi.core.status import Status
+from picomidi.core.status import MidiStatus
 
 # Create a Note On message
 note_on = NoteOn(

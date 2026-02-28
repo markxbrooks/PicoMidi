@@ -8,7 +8,7 @@ which identify the type of MIDI message.
 from picomidi.core.bitmask import BitMask
 
 
-class Status:
+class MidiStatus:
     """
     MIDI status byte constants and utilities.
 
@@ -90,7 +90,7 @@ class Status:
         :param status: Status byte value
         :return: Channel number (0-15), or None if not a channel message
         """
-        if Status.is_channel_voice(status):
+        if MidiStatus.is_channel_voice(status):
             return status & BitMask.LOW_4_BITS
         return None
 

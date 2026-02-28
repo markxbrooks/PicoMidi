@@ -8,7 +8,7 @@ like volume, pan, modulation, etc.
 from typing import List
 
 from picomidi.core.channel import Channel
-from picomidi.core.status import Status
+from picomidi.core.midistatus import MidiStatus
 from picomidi.core.types import ControlValue
 from picomidi.message.base import Message
 
@@ -43,7 +43,7 @@ class ControlChange(Message):
 
     def to_list(self) -> List[int]:
         """Convert to list of integers."""
-        status = Status.make_channel_voice(Status.CONTROL_CHANGE, self.channel.value)
+        status = MidiStatus.make_channel_voice(MidiStatus.CONTROL_CHANGE, self.channel.value)
         return [status, self.controller, self.value]
 
     def to_bytes(self) -> bytes:

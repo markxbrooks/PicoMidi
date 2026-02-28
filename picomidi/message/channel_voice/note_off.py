@@ -7,7 +7,7 @@ A Note Off message indicates that a note should stop playing.
 from typing import List
 
 from picomidi.core.channel import Channel
-from picomidi.core.status import Status
+from picomidi.core.midistatus import MidiStatus
 from picomidi.core.types import Note, Velocity
 from picomidi.message.base import Message
 
@@ -34,7 +34,7 @@ class NoteOff(Message):
 
     def to_list(self) -> List[int]:
         """Convert to list of integers."""
-        status = Status.make_channel_voice(Status.NOTE_OFF, self.channel.value)
+        status = MidiStatus.make_channel_voice(MidiStatus.NOTE_OFF, self.channel.value)
         return [status, self.note.value, self.velocity.value]
 
     def to_bytes(self) -> bytes:

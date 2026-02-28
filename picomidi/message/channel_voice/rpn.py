@@ -15,7 +15,7 @@ from typing import List
 from picomidi.core.value import MidiValue
 from picomidi.core.bitmask import BitMask
 from picomidi.core.channel import Channel
-from picomidi.core.status import Status
+from picomidi.core.midistatus import MidiStatus
 from picomidi.message.base import Message
 from picomidi.utils.validation import validate_14bit_value
 
@@ -83,7 +83,7 @@ class RPN(Message):
             value_lsb = 0
 
         # Build sequence of Control Change messages
-        status = Status.make_channel_voice(Status.CONTROL_CHANGE, self.channel.value)
+        status = MidiStatus.make_channel_voice(MidiStatus.CONTROL_CHANGE, self.channel.value)
 
         messages = [
             # RPN MSB
@@ -122,7 +122,7 @@ class RPN(Message):
             value_msb = self.value & BitMask.LOW_7_BITS
             value_lsb = 0
 
-        status = Status.make_channel_voice(Status.CONTROL_CHANGE, self.channel.value)
+        status = MidiStatus.make_channel_voice(MidiStatus.CONTROL_CHANGE, self.channel.value)
 
         messages = [
             [status, 101, param_msb],  # RPN MSB

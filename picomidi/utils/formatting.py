@@ -7,7 +7,7 @@ for digital, logging, and debugging.
 
 from typing import Iterable, List
 
-from picomidi.core.status import Status
+from picomidi.core.midistatus import MidiStatus
 from picomidi.message.base import Message
 
 
@@ -56,38 +56,38 @@ def get_message_type_name(status: int) -> str:
     :param status: Status byte value
     :return: Message type name
     """
-    if Status.is_channel_voice(status):
-        msg_type = Status.get_message_type(status)
+    if MidiStatus.is_channel_voice(status):
+        msg_type = MidiStatus.get_message_type(status)
         type_names = {
-            Status.NOTE_OFF: "Note Off",
-            Status.NOTE_ON: "Note On",
-            Status.POLY_AFTERTOUCH: "Poly Aftertouch",
-            Status.CONTROL_CHANGE: "Control Change",
-            Status.PROGRAM_CHANGE: "Program Change",
-            Status.CHANNEL_AFTERTOUCH: "Channel Aftertouch",
-            Status.PITCH_BEND: "Pitch Bend",
+            MidiStatus.NOTE_OFF: "Note Off",
+            MidiStatus.NOTE_ON: "Note On",
+            MidiStatus.POLY_AFTERTOUCH: "Poly Aftertouch",
+            MidiStatus.CONTROL_CHANGE: "Control Change",
+            MidiStatus.PROGRAM_CHANGE: "Program Change",
+            MidiStatus.CHANNEL_AFTERTOUCH: "Channel Aftertouch",
+            MidiStatus.PITCH_BEND: "Pitch Bend",
         }
         return type_names.get(msg_type, f"Unknown Channel Voice (0x{msg_type:02X})")
 
-    if Status.is_system_common(status):
+    if MidiStatus.is_system_common(status):
         type_names = {
-            Status.SYSTEM_EXCLUSIVE: "System Exclusive",
-            Status.MIDI_TIME_CODE: "MIDI Time Code",
-            Status.SONG_POSITION: "Song Position",
-            Status.SONG_SELECT: "Song Select",
-            Status.TUNE_REQUEST: "Tune Request",
-            Status.END_OF_EXCLUSIVE: "End of Exclusive",
+            MidiStatus.SYSTEM_EXCLUSIVE: "System Exclusive",
+            MidiStatus.MIDI_TIME_CODE: "MIDI Time Code",
+            MidiStatus.SONG_POSITION: "Song Position",
+            MidiStatus.SONG_SELECT: "Song Select",
+            MidiStatus.TUNE_REQUEST: "Tune Request",
+            MidiStatus.END_OF_EXCLUSIVE: "End of Exclusive",
         }
         return type_names.get(status, f"Unknown System Common (0x{status:02X})")
 
-    if Status.is_system_realtime(status):
+    if MidiStatus.is_system_realtime(status):
         type_names = {
-            Status.TIMING_CLOCK: "Timing Clock",
-            Status.START: "Start",
-            Status.CONTINUE: "Continue",
-            Status.STOP: "Stop",
-            Status.ACTIVE_SENSING: "Active Sensing",
-            Status.SYSTEM_RESET: "System Reset",
+            MidiStatus.TIMING_CLOCK: "Timing Clock",
+            MidiStatus.START: "Start",
+            MidiStatus.CONTINUE: "Continue",
+            MidiStatus.STOP: "Stop",
+            MidiStatus.ACTIVE_SENSING: "Active Sensing",
+            MidiStatus.SYSTEM_RESET: "System Reset",
         }
         return type_names.get(status, f"Unknown System Realtime (0x{status:02X})")
 
