@@ -17,7 +17,6 @@ from picomidi.constant import Midi
 from picomidi.core.bitmask import BitMask
 from picomidi.core.channel import Channel
 from picomidi.core.channel_legacy import MidiChannel
-from picomidi.core.status import Status
 from picomidi.core.tempo import MidiTempo
 from picomidi.core.types import (
     ControlValue,
