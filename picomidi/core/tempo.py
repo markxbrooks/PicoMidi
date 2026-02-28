@@ -1,6 +1,7 @@
 """
 MIDI tempo and timing constants and conversion.
 """
+
 from typing import Any
 
 from mido import MidiTrack

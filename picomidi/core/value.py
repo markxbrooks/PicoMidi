@@ -44,9 +44,5 @@ class MidiValue:
         :return: True if the value is within range, False otherwise.
         """
         if signed:
-            return (
-                MidiValue.SignedSixteenBit.MIN
-                <= value
-                <= MidiValue.SignedSixteenBit.MAX
-            )
+            return MidiValue.SignedSixteenBit.MIN <= value <= MidiValue.SignedSixteenBit.MAX
         return 0 <= value <= MidiValue.max.SIXTEEN_BIT

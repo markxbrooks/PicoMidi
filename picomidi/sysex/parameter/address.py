@@ -89,9 +89,7 @@ class AddressParameter(Enum):
         :param address: int
         :return: parameter member or None
         """
-        return next(
-            (parameter for parameter in cls if parameter.address == address), None
-        )
+        return next((parameter for parameter in cls if parameter.address == address), None)
 
     @property
     def is_switch(self) -> bool:

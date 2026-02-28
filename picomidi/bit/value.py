@@ -22,6 +22,4 @@ class BitValue:
             16: 0xFFFF,  # 65535, 16-bit max
             32: 0xFFFFFFFF,  # 4294967295, 32-bit max
         }
-        return size_map.get(
-            size, (1 << size) - 1
-        )  # Default to dynamic calc if not in map
+        return size_map.get(size, (1 << size) - 1)  # Default to dynamic calc if not in map

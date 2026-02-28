@@ -26,11 +26,11 @@ from picomidi.utils.conversion import (
     midi_value_to_ms,
     ms_to_midi_value,
     signed_to_unsigned_14bit,
+    split_8bit_value_to_nibbles,
     split_14bit_to_7bit,
     split_16bit_value_to_bytes,
     split_16bit_value_to_nibbles,
     split_32bit_value_to_nibbles,
-    split_8bit_value_to_nibbles,
     unsigned_to_signed_14bit,
 )
 
@@ -240,7 +240,7 @@ class TestSignedUnsignedConversions(unittest.TestCase):
             unsigned = signed_to_unsigned_14bit(signed_val)
             result = unsigned_to_signed_14bit(unsigned)
             self.assertEqual(result, signed_val, f"Round-trip failed for {signed_val}")
-        
+
         # Test negative values (they map to >= 0x4000 range)
         # -8191 maps to 0x4000 + (-8191) = 8193
         # 8193 is < 0x4000 (16384), so unsigned_to_signed returns it as-is: 8193
@@ -249,7 +249,7 @@ class TestSignedUnsignedConversions(unittest.TestCase):
         self.assertEqual(unsigned, 0x2001)  # 8193
         result = unsigned_to_signed_14bit(unsigned)
         self.assertEqual(result, 8193)  # < 0x4000, so returns as-is
-        
+
         # -8192 maps to 8192
         # 8192 is < 0x4000 (16384), so unsigned_to_signed returns it as-is: 8192
         unsigned = signed_to_unsigned_14bit(-8192)
@@ -401,7 +401,7 @@ class TestFractionConversions(unittest.TestCase):
                 places=1,  # Reduced precision due to quantization
                 msg=f"Round-trip failed for {fraction}: {midi_val} -> {result}",
             )
-        
+
         # Test that conversions are monotonic
         fractions = [0.0, 0.25, 0.5, 0.75, 1.0]
         midi_vals = [fraction_to_midi_value(f) for f in fractions]

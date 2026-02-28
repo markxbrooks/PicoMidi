@@ -1,4 +1,4 @@
-from abc import abstractmethod, ABC
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 
@@ -16,8 +16,7 @@ class ByteGroup(ABC):
 
     @property
     @abstractmethod
-    def bytes(self) -> tuple[int, ...]:
-        ...
+    def bytes(self) -> tuple[int, ...]: ...
 
     def __repr__(self):
         return f"{self.__class__.__name__}(address='{self.bytes_string()}')"

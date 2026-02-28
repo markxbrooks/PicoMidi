@@ -1,11 +1,13 @@
 """
 Types for Mido Messages
 """
+
 from enum import Enum
 
 
 class MidoMessageType(Enum):
     """Mido Message Types"""
+
     NOTE_ON = "note_on"
     NOTE_OFF = "note_off"
     CONTROL_CHANGE = "control_change"

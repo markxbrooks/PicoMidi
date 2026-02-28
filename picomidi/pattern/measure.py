@@ -1,8 +1,10 @@
 """
 Pattern Measure
 """
+
 import random
-from jdxi_editor.ui.editors.pattern.step.data import StepData
+
+from picomidi.pattern.step.data import StepData
 
 
 class PatternMeasure:
@@ -31,6 +33,7 @@ class PatternMeasure:
 
     def scale_velocity(self, factor: float):
         """scale velocity"""
+
         def op(r, s, step):
             if step.active:
                 step.velocity = max(1, min(127, int(step.velocity * factor)))
@@ -46,7 +49,7 @@ class PatternMeasure:
     def copy_steps(self, src_start: int, length: int, dest_start: int):
         """copy steps"""
         for row in self.steps:
-            block = row[src_start:src_start + length]
+            block = row[src_start : src_start + length]
             for i, step in enumerate(block):
                 row[(dest_start + i) % self.steps_per_bar] = StepData(
                     active=step.active,
@@ -61,6 +64,7 @@ class PatternMeasure:
 
     def humanize_velocity(self, amount: int = 10):
         """'humanize' velocity with random quirks"""
+
         def op(r, s, step):
             if step.active:
                 delta = random.randint(-amount, amount)

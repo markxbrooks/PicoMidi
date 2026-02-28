@@ -206,9 +206,7 @@ class PitchBendValue:
 
     def __post_init__(self):
         if not -8192 <= self.value <= 8191:
-            raise ValueError(
-                f"Pitch bend value must be -8192 to 8191, got {self.value}"
-            )
+            raise ValueError(f"Pitch bend value must be -8192 to 8191, got {self.value}")
 
     @classmethod
     def from_14bit(cls, value: int) -> "PitchBendValue":

@@ -28,9 +28,7 @@ def microseconds_per_quarter_to_bpm(usec_per_quarter: int) -> float:
     :return: Beats per minute
     """
     if usec_per_quarter <= 0:
-        raise ValueError(
-            f"Microseconds per quarter must be positive, got {usec_per_quarter}"
-        )
+        raise ValueError(f"Microseconds per quarter must be positive, got {usec_per_quarter}")
     return MidiTempo.MICROSECONDS_PER_MINUTE / usec_per_quarter
 
 
@@ -88,9 +86,7 @@ def seconds_to_ticks(seconds: float, ticks_per_beat: int, bpm: float) -> int:
     return int(beats * ticks_per_beat)
 
 
-def ticks_to_seconds_with_tempo(
-    ticks: int, tempo: int, ticks_per_beat: int
-) -> float:
+def ticks_to_seconds_with_tempo(ticks: int, tempo: int, ticks_per_beat: int) -> float:
     """
     Convert MIDI ticks to seconds using tempo in microseconds per quarter note.
 
@@ -106,9 +102,7 @@ def ticks_to_seconds_with_tempo(
     return (tempo / float(MidiTempo.MICROSECONDS_PER_SECOND)) * (ticks / ticks_per_beat)
 
 
-def seconds_to_ticks_with_tempo(
-    seconds: float, tempo: int, ticks_per_beat: int
-) -> int:
+def seconds_to_ticks_with_tempo(seconds: float, tempo: int, ticks_per_beat: int) -> int:
     """
     Convert seconds to MIDI ticks using tempo in microseconds per quarter note.
 

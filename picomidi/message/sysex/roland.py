@@ -62,18 +62,19 @@ class RolandSysExMessage(Message):
 
         :raises ValueError: If message structure is invalid
         """
+
         # Helper to safely convert to int for validation and formatting
         def safe_int_for_validation(val):
             if isinstance(val, int):
                 return val
-            if hasattr(val, 'value'):  # Handle enums
+            if hasattr(val, "value"):  # Handle enums
                 enum_val = val.value
                 return int(enum_val) if not isinstance(enum_val, int) else enum_val
             try:
                 return int(float(val))  # Handle floats and strings
             except (ValueError, TypeError):
                 return 0
-        
+
         # Validate manufacturer ID (safely convert for formatting)
         manufacturer_id_int = safe_int_for_validation(self.manufacturer_id)
         if manufacturer_id_int != 0x41:
@@ -84,15 +85,12 @@ class RolandSysExMessage(Message):
         # Validate device ID (0x10-0x1F or 0x7F for all devices) - safely convert for comparison and formatting
         device_id_int = safe_int_for_validation(self.device_id)
         if not (0x10 <= device_id_int <= 0x1F or device_id_int == 0x7F):
-            raise ValueError(
-                f"Device ID must be 0x10-0x1F or 0x7F, got 0x{device_id_int:02X}"
-            )
+            raise ValueError(f"Device ID must be 0x10-0x1F or 0x7F, got 0x{device_id_int:02X}")
 
         # Validate model ID (must be 4 bytes)
         if len(self.model_id) != 4:
-            raise ValueError(
-                f"Model ID must be exactly 4 bytes, got {len(self.model_id)} bytes"
-            )
+            raise ValueError(f"Model ID must be exactly 4 bytes, got {len(self.model_id)} bytes")
+
         # Safely validate and convert model ID bytes
         def safe_validate_byte(byte):
             if isinstance(byte, int):
@@ -102,21 +100,17 @@ class RolandSysExMessage(Message):
                 return 0 <= byte_int <= 0x7F
             except (ValueError, TypeError):
                 return False
-        
+
         if any(not safe_validate_byte(byte) for byte in self.model_id):
             raise ValueError("Model ID bytes must be 0-127 (7-bit safe)")
-        
+
         # Convert model ID bytes to integers if they aren't already
-        self.model_id = [
-            int(float(b)) if not isinstance(b, int) else b
-            for b in self.model_id
-        ]
+        self.model_id = [int(float(b)) if not isinstance(b, int) else b for b in self.model_id]
 
         # Validate address (must be 4 bytes)
         if len(self.address) != 4:
-            raise ValueError(
-                f"Address must be exactly 4 bytes, got {len(self.address)} bytes"
-            )
+            raise ValueError(f"Address must be exactly 4 bytes, got {len(self.address)} bytes")
+
         # Safely validate and convert address bytes
         def safe_validate_byte(byte):
             if isinstance(byte, int):
@@ -126,15 +120,12 @@ class RolandSysExMessage(Message):
                 return 0 <= byte_int <= 0x7F
             except (ValueError, TypeError):
                 return False
-        
+
         if any(not safe_validate_byte(byte) for byte in self.address):
             raise ValueError("Address bytes must be 0-127 (7-bit safe)")
-        
+
         # Convert address bytes to integers if they aren't already
-        self.address = [
-            int(float(b)) if not isinstance(b, int) else b
-            for b in self.address
-        ]
+        self.address = [int(float(b)) if not isinstance(b, int) else b for b in self.address]
 
         # Validate data bytes (must be 7-bit safe)
         # Safely convert and validate each byte
@@ -147,15 +138,12 @@ class RolandSysExMessage(Message):
                 return 0 <= byte_int <= 0x7F
             except (ValueError, TypeError):
                 return False
-        
+
         if any(not safe_validate_byte(byte) for byte in self.data):
             raise ValueError("Data bytes must be 0-127 (7-bit safe)")
-        
+
         # Convert data bytes to integers if they aren't already
-        self.data = [
-            int(float(b)) if not isinstance(b, int) else b
-            for b in self.data
-        ]
+        self.data = [int(float(b)) if not isinstance(b, int) else b for b in self.data]
 
         # Validate command
         if not (0 <= self.command <= 0x7F):
@@ -170,18 +158,19 @@ class RolandSysExMessage(Message):
 
         :return: Checksum value (0-127)
         """
+
         # Helper to safely convert to int
         def safe_int(val):
             if isinstance(val, int):
                 return val
-            if hasattr(val, 'value'):  # Handle enums
+            if hasattr(val, "value"):  # Handle enums
                 enum_val = val.value
                 return int(enum_val) if not isinstance(enum_val, int) else enum_val
             try:
                 return int(float(val))  # Handle floats and strings
             except (ValueError, TypeError):
                 return 0
-        
+
         # Ensure all values are integers before calculating checksum
         checksum_data = [safe_int(b) for b in (self.address + self.data)]
         return calculate_checksum(checksum_data)
@@ -194,11 +183,12 @@ class RolandSysExMessage(Message):
 
         :return: List of byte values (0-255)
         """
+
         # Helper to safely convert to int
         def safe_int(val):
             if isinstance(val, int):
                 return val
-            if hasattr(val, 'value'):  # Handle enums
+            if hasattr(val, "value"):  # Handle enums
                 enum_val = val.value
                 return int(enum_val) if not isinstance(enum_val, int) else enum_val
             try:
@@ -207,6 +197,7 @@ class RolandSysExMessage(Message):
                 return 0
 
         from picomidi import MidiSysExByte
+
         msg = [
             MidiSysExByte.START,  # F0
             safe_int(self.manufacturer_id),  # 0x41 (Roland)
@@ -238,10 +229,9 @@ class RolandSysExMessage(Message):
         :raises ValueError: If message format is invalid
         """
         from picomidi import MidiSysExByte
+
         if len(data) < 13:  # Minimum: F0 + 41 + dev + model(4) + cmd + addr(4) + chk + F7
-            raise ValueError(
-                f"Message too short: expected at least 13 bytes, got {len(data)}"
-            )
+            raise ValueError(f"Message too short: expected at least 13 bytes, got {len(data)}")
 
         if data[0] != MidiSysExByte.START:
             raise ValueError(f"Invalid start byte: expected 0xF0, got 0x{data[0]:02X}")
@@ -251,9 +241,7 @@ class RolandSysExMessage(Message):
 
         manufacturer_id = data[1]
         if manufacturer_id != 0x41:
-            raise ValueError(
-                f"Not a Roland message: manufacturer ID 0x{manufacturer_id:02X}"
-            )
+            raise ValueError(f"Not a Roland message: manufacturer ID 0x{manufacturer_id:02X}")
 
         device_id = data[2]
         model_id = list(data[3:7])  # 4 bytes

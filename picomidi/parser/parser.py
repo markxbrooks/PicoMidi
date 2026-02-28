@@ -8,11 +8,9 @@ into structured message objects.
 from typing import Iterator, List, Optional
 
 from mido.messages.specs import SYSEX_END
-
 from picomidi.core.channel import Channel
 from picomidi.core.midistatus import MidiStatus
-from picomidi.core.types import (ControlValue, Note, PitchBendValue,
-                                 ProgramNumber, Velocity)
+from picomidi.core.types import ControlValue, Note, PitchBendValue, ProgramNumber, Velocity
 from picomidi.message.base import Message
 from picomidi.message.channel_voice.control_change import ControlChange
 from picomidi.message.channel_voice.note_off import NoteOff
@@ -68,9 +66,9 @@ class Parser:
 
                 # Determine data length based on message type
                 if msg_type in (
-                        MidiStatus.NOTE_ON,
-                        MidiStatus.NOTE_OFF,
-                        MidiStatus.POLY_AFTERTOUCH,
+                    MidiStatus.NOTE_ON,
+                    MidiStatus.NOTE_OFF,
+                    MidiStatus.POLY_AFTERTOUCH,
                 ):
                     if len(self.buffer) < 3:
                         break  # Need more data

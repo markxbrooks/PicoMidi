@@ -9,8 +9,7 @@ import warnings
 from picomidi.messages.program_change import ProgramChange
 
 warnings.warn(
-    "picomidi.pc.program_change is deprecated; "
-    "use picomidi.messages.program_change instead.",
+    "picomidi.pc.program_change is deprecated; " "use picomidi.messages.program_change instead.",
     DeprecationWarning,
     stacklevel=2,
 )

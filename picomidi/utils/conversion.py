@@ -91,9 +91,7 @@ def unsigned_to_signed_14bit(value: int) -> int:
 # ============================================================================
 
 
-def midi_value_to_ms(
-    midi_value: int, min_time: int = 10, max_time: int = 1000
-) -> float:
+def midi_value_to_ms(midi_value: int, min_time: int = 10, max_time: int = 1000) -> float:
     """
     Convert a MIDI value (0-127) to a time value in milliseconds.
 
@@ -115,9 +113,7 @@ def midi_value_to_ms(
     return ms_time
 
 
-def ms_to_midi_value(
-    ms_time: float, min_time: int = 10, max_time: int = 1000
-) -> int:
+def ms_to_midi_value(ms_time: float, min_time: int = 10, max_time: int = 1000) -> int:
     """
     Convert a time value in milliseconds to a MIDI value (0-127).
 
@@ -155,9 +151,7 @@ def fraction_to_midi_value(
     return clamp_midi_value(midi_value)
 
 
-def midi_value_to_fraction(
-    midi_value: int, minimum: float = 0.0, maximum: float = 1.0
-) -> float:
+def midi_value_to_fraction(midi_value: int, minimum: float = 0.0, maximum: float = 1.0) -> float:
     """
     Convert a MIDI value (0-127) to a fractional value (0.0-1.0).
 
@@ -236,13 +230,9 @@ def split_32bit_value_to_nibbles(value: int) -> List[int]:
     """
     max_32bit = 0xFFFFFFFF
     if value < 0 or value > max_32bit:
-        raise ValueError(
-            "Value must be a 32-bit unsigned integer (0-4294967295)"
-        )
+        raise ValueError("Value must be a 32-bit unsigned integer (0-4294967295)")
 
-    return [
-        (value >> (4 * (7 - i))) & BitMask.LOW_4_BITS for i in range(8)
-    ]
+    return [(value >> (4 * (7 - i))) & BitMask.LOW_4_BITS for i in range(8)]
 
 
 def join_nibbles_to_16bit(nibbles: List[int]) -> int:

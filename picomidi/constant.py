@@ -2,6 +2,8 @@
 Standard MIDI Protocol Constants
 """
 
+from picomidi.cc.nrpn import NonRegisteredParameterNumber
+from picomidi.cc.rpn import RegisteredParameterNumber
 from picomidi.core.channel_legacy import MidiChannel
 from picomidi.core.tempo import MidiTempo
 from picomidi.core.value import MidiValue
@@ -13,8 +15,6 @@ from picomidi.messages.program_change import ProgramChange
 from picomidi.messages.song import Song
 from picomidi.messages.sysex import MidiSysExByte
 from picomidi.misc import MidiMisc
-from picomidi.cc.rpn import RegisteredParameterNumber
-from picomidi.cc.nrpn import NonRegisteredParameterNumber
 
 
 class Midi:
@@ -33,5 +33,3 @@ class Midi:
     misc = MidiMisc
     nrpn = RegisteredParameterNumber
     rpn = NonRegisteredParameterNumber
-
-    

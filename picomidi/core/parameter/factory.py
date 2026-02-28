@@ -60,7 +60,5 @@ class AddressFactory:
     def key(addr) -> str:
         """Canonical dictionary key."""
         return " ".join(
-            getattr(addr, field)
-            for field in ("msb", "umb", "lmb", "lsb")
-            if hasattr(addr, field)
+            getattr(addr, field) for field in ("msb", "umb", "lmb", "lsb") if hasattr(addr, field)
         )

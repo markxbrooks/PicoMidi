@@ -13,9 +13,9 @@ from dataclasses import dataclass
 from typing import List
 
 from picomidi.core.bitmask import BitMask
-from picomidi.core.value import MidiValue
 from picomidi.core.channel import Channel
 from picomidi.core.midistatus import MidiStatus
+from picomidi.core.value import MidiValue
 from picomidi.message.base import Message
 from picomidi.utils.validation import validate_14bit_value
 
@@ -49,14 +49,10 @@ class NRPN(Message):
     def __post_init__(self):
         """Validate NRPN parameter and value ranges."""
         if not validate_14bit_value(self.parameter):
-            raise ValueError(
-                f"NRPN parameter must be between 0 and 16383, got {self.parameter}"
-            )
+            raise ValueError(f"NRPN parameter must be between 0 and 16383, got {self.parameter}")
         if self.use_14bit:
             if not validate_14bit_value(self.value):
-                raise ValueError(
-                    f"NRPN value must be between 0 and 16383, got {self.value}"
-                )
+                raise ValueError(f"NRPN value must be between 0 and 16383, got {self.value}")
         else:
             if not 0 <= self.value <= MidiValue.max.SEVEN_BIT:
                 raise ValueError(

@@ -46,6 +46,4 @@ class PitchBend(Message):
         return bytes(self.to_list())
 
     def __repr__(self) -> str:
-        return (
-            f"PitchBend(channel={self.channel.to_display()}, value={self.value})"
-        )
+        return f"PitchBend(channel={self.channel.to_display()}, value={self.value})"
