@@ -4,6 +4,7 @@ MIDI Timing Utilities
 This module provides functions for MIDI timing calculations,
 including tempo, BPM, ticks, and time conversions.
 """
+from picomidi import MidiTempo
 
 
 def bpm_to_microseconds_per_quarter(bpm: float) -> int:

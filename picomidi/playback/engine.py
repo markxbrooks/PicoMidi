@@ -10,6 +10,8 @@ from typing import Callable, List, Optional
 
 import mido
 
+from picomidi import MidiTempo
+
 
 @dataclass
 class ScheduledEvent:
@@ -53,7 +55,7 @@ class PlaybackEngine:
         self.midi_file: Optional[mido.MidiFile] = None
         self.ticks_per_beat: int = 480
 
-        self.tempo_us: int = 500000  # default 120 BPM
+        self.tempo_us: int = MidiTempo.BPM_120_USEC # default 120 BPM
         self._tempo_map: dict[int, int] = {}
         self._tick_to_time: List[tuple[int, float]] = (
             []
@@ -188,7 +190,7 @@ class PlaybackEngine:
         out: List[tuple[int, float]] = []
         time_sec = 0.0
         prev_tick = 0
-        prev_tempo = self._tempo_map[0] if 0 in self._tempo_map else 500000
+        prev_tempo = self._tempo_map[0] if 0 in self._tempo_map else MidiTempo.BPM_120_USEC
         for t in ticks_sorted:
             if t == 0:
                 out.append((0, 0.0))
@@ -220,7 +222,7 @@ class PlaybackEngine:
     def _get_tempo_at_tick(self, tick: int) -> int:
         applicable = [t for t in self._tempo_map if t <= tick]
         if not applicable:
-            return 500000
+            return MidiTempo.BPM_120_USEC
         return self._tempo_map[max(applicable)]
 
     def process_until_now(self) -> None:
