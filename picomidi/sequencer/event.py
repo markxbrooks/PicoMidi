@@ -1,8 +1,7 @@
 """
 Sequencer Event
 """
-
-from picomidi import MidiNote
+from picomidi.messages import MidiNote
 from picomidi.core.tempo import bpm_to_tempo_us, ticks_to_duration_ms
 
 

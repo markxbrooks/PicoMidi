@@ -2,9 +2,15 @@
 MIDI Note message constants.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from mido import Message
 from picomidi.message.type import MidoMessageType
-from picomidi.sequencer.event import SequencerEvent
+
+if TYPE_CHECKING:
+    from picomidi.sequencer.event import SequencerEvent
 
 
 class MidiNote:

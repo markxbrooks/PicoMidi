@@ -40,7 +40,7 @@ class Channel(IntEnum):
     TOTAL_CHANNELS = 16
 
     @classmethod
-    def from_display(cls, channel: int) -> "Channel":
+    def from_value(cls, channel: int) -> "Channel":
         """
         Convert 1-based digital channel to 0-based Channel enum.
 

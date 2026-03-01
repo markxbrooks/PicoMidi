@@ -14,6 +14,7 @@ from picomidi.message.base import Message
 
 
 class ControlChange(Message):
+
     """
     MIDI Control Change message.
 
@@ -25,7 +26,19 @@ class ControlChange(Message):
     - 64 = Sustain Pedal
     - 91 = Reverb
     - 93 = Chorus
+    - 123 = All Sound off
+    - 123 = All notes off
     """
+
+    # Common CC numbers
+    MODULATION_WHEEL = 1
+    VOLUME = 7
+    PAN = 10
+    SUSTAIN_PEDAL = 64
+    REVERB = 91
+    CHORUS = 93
+    ALL_SOUND_OFF = 120
+    ALL_NOTES_OFF = 123
 
     def __init__(self, channel: Channel, controller: int, value: ControlValue):
         """
@@ -44,7 +57,7 @@ class ControlChange(Message):
     def to_list(self) -> List[int]:
         """Convert to list of integers."""
         status = MidiStatus.make_channel_voice(MidiStatus.CONTROL_CHANGE, self.channel.value)
-        return [status, self.controller, self.value]
+        return [status, self.controller, self.value.value]
 
     def to_bytes(self) -> bytes:
         """Convert to bytes."""
