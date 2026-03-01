@@ -1,12 +1,19 @@
 """
 Playback Engine
+
+ScheduledEvent Example Usage:
+==============
+>>> from picomidi.message.type import MidoMessageType
+>>> event = ScheduledEvent(absolute_tick=344, message=mido.Message(MidoMessageType.NOTE_ON.value), track_index=1)
+>>> event
+ScheduledEvent(absolute_tick=344, message=Message('note_on', channel=0, note=0, velocity=64, time=0), track_index=1)
 """
 
 import bisect
 import time
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Any
 
 import mido
 
@@ -80,7 +87,7 @@ class PlaybackEngine:
         self._is_playing = False  # True only when _state == PLAYING
 
         # callback hook (UI/worker attaches to this)
-        self.on_event: Optional[Callable[[mido.Message], None]] = None
+        self.on_event: Optional[Callable[[mido.Message], Any]] = None
 
     @property
     def state(self) -> TransportState:

@@ -2,7 +2,7 @@
 Sequencer Event
 """
 from picomidi.messages import MidiNote
-from picomidi.core.tempo import bpm_to_tempo_us, ticks_to_duration_ms
+from picomidi.core.tempo import bpm_to_tempo_us, ticks_to_duration_ms, MidiTempo
 
 
 class SequencerEvent:
@@ -36,6 +36,10 @@ class SequencerEvent:
                 time=0,
             )
         return self._midi_note
+
+    def resolve_note_duration(self, bpm: int) -> int | float:
+        """resolve note duration"""
+        return (float(MidiTempo.MILLISECONDS_PER_MINUTE) / bpm) / 4.0
 
     @property
     def midi_note(self) -> MidiNote:

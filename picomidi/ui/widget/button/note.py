@@ -2,20 +2,21 @@
 Note Button Spec
 """
 
-from picomidi import MidiNote
+from picomidi import MidiNote, MidiTempo
 
 
-class NoteButtonSpec:
+class NoteButtonEvent:
     """
-    Note/spec for sequencer buttons. Canonical source is midi_note.
+    Note event for sequencer buttons. Canonical source is midi_note.
     Init args build midi_note; properties redirect reads to it.
     """
 
-    def __init__(self, note=None, duration_ms=None, velocity=None, time=0):
+    def __init__(self, note=None, duration_ms=None, velocity=None, time=0, channel: int = 0):
         self.note = note
-        self.duration_ms = int(duration_ms) if duration_ms is not None else 120
+        self.duration_ms = int(duration_ms) if duration_ms is not None else None
         self.velocity = velocity if velocity is not None else 100
         self.time = time
+        self.channel = channel
         self._sync_midi_note()
 
     def _sync_midi_note(self) -> None:
@@ -28,6 +29,10 @@ class NoteButtonSpec:
             )
         else:
             self.midi_note = None
+
+    def resolve_note_duration(self, bpm: int) -> int | float:
+        """resolve note duration"""
+        return (float(MidiTempo.MILLISECONDS_PER_MINUTE) / bpm) / 4.0
 
     def __setattr__(self, name: str, value: object) -> None:
         super().__setattr__(name, value)
