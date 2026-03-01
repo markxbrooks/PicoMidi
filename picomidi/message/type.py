@@ -16,3 +16,9 @@ class MidoMessageType(Enum):
     AFTERTOUCH = "aftertouch"
     POLYTOUCH = "polytouch"
     SET_TEMPO = "set_tempo"
+
+
+class MidoMetaMessageType(Enum):
+    """Mido Meta Message Types"""
+    TRACK_NAME = "track_name"
+    END_OF_TRACK = "end_of_track"
