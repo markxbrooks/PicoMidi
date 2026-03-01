@@ -22,3 +22,4 @@ class MidoMetaMessageType(Enum):
     """Mido Meta Message Types"""
     TRACK_NAME = "track_name"
     END_OF_TRACK = "end_of_track"
+    SET_TEMPO = "set_tempo"set_tempo"
