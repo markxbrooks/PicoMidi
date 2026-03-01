@@ -23,3 +23,5 @@ class MidoMetaMessageType(Enum):
     TRACK_NAME = "track_name"
     END_OF_TRACK = "end_of_track"
     SET_TEMPO = "set_tempo"
+    TIME_SIGNATURE = "time_signature"
+    SEQUENCE_NAME = "sequence_name"
