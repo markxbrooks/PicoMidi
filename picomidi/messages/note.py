@@ -3,9 +3,8 @@ MIDI Note message constants.
 """
 
 from mido import Message
-
-from jdxi_editor.midi.playback.controller import SequencerEvent
 from picomidi.message.type import MidoMessageType
+from picomidi.sequencer.event import SequencerEvent
 
 
 class MidiNote:

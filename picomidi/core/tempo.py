@@ -107,7 +107,7 @@ def bpm_to_ticks(bpm: int, duration_ms: float, ticks_per_beat: int) -> int:
     """Convert a duration in milliseconds to MIDI ticks."""
     ticks = (
         (duration_ms / 1000.0)  # ms → seconds
-        * (bpm / 60.0)          # beats per second
-        * ticks_per_beat        # ticks per beat
+        * (bpm / 60.0)  # beats per second
+        * ticks_per_beat  # ticks per beat
     )
     return int(round(ticks))
