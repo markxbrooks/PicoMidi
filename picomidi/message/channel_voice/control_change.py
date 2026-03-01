@@ -40,7 +40,7 @@ class ControlChange(Message):
     ALL_SOUND_OFF = 120
     ALL_NOTES_OFF = 123
 
-    def __init__(self, channel: Channel, controller: int, value: ControlValue):
+    def __init__(self, channel: Channel, controller: int, control_value: ControlValue):
         """
         Create a Control Change message.
 
@@ -52,12 +52,12 @@ class ControlChange(Message):
             raise ValueError(f"Controller number must be 0-127, got {controller}")
         self.channel = channel
         self.controller = controller
-        self.value = value
+        self.control_value = control_value
 
     def to_list(self) -> List[int]:
         """Convert to list of integers."""
         status = MidiStatus.make_channel_voice(MidiStatus.CONTROL_CHANGE, self.channel.value)
-        return [status, self.controller, self.value.value]
+        return [status, self.controller, self.control_value.value]
 
     def to_bytes(self) -> bytes:
         """Convert to bytes."""
