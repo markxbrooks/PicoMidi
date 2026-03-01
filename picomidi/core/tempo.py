@@ -61,3 +61,53 @@ def convert_absolute_time_to_delta_time(events: list[Any], track: MidiTrack):
         msg.time = delta
         track.append(msg)
         last_time = abs_time
+
+
+class MeasureBeats:
+    """Measure Beats"""
+
+    PER_MEASURE_4_4 = 16
+    PER_MEASURE_3_4 = 12
+
+
+def bpm_to_tempo_us(bpm: float) -> int:
+    """bpm to tempo in us"""
+    return int(MidiTempo.MICROSECONDS_PER_MINUTE / bpm)
+
+
+def bpm_to_tempo_ms(bpm: float) -> int:
+    """bpm to tempo in us"""
+    return int(MidiTempo.MILLISECONDS_PER_MINUTE / bpm)
+
+
+def ms_to_ticks(duration_ms: int, bpm: float, ppq: int) -> int:
+    """ms to ticks"""
+    ms_per_beat = bpm_to_tempo_ms(bpm)
+    return int((duration_ms / ms_per_beat) * ppq)
+
+
+def us_to_ticks(duration_us: int, bpm: float, ppq: int) -> int:
+    """ms to ticks"""
+    ms_per_beat = bpm_to_tempo_ms(bpm)
+    return int((duration_us * 1_000 / ms_per_beat) * ppq)
+
+
+def ticks_to_ms(ticks: int, bpm: float, ppq: int = 480):
+    """ticks to duration in ms"""
+    ms_per_beat = bpm_to_tempo_ms(bpm)
+    return ticks / ppq * ms_per_beat
+
+
+def ticks_to_duration_ms(ticks, tempo: int, ppq: int) -> float | Any:
+    """tempo is in us"""
+    return (ticks / ppq) * (tempo / 1000.0)
+
+
+def bpm_to_ticks(bpm: int, duration_ms: float, ticks_per_beat: int) -> int:
+    """Convert a duration in milliseconds to MIDI ticks."""
+    ticks = (
+        (duration_ms / 1000.0)  # ms → seconds
+        * (bpm / 60.0)          # beats per second
+        * ticks_per_beat        # ticks per beat
+    )
+    return int(round(ticks))

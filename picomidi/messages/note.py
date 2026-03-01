@@ -3,6 +3,8 @@ MIDI Note message constants.
 """
 
 from mido import Message
+
+from jdxi_editor.midi.playback.controller import SequencerEvent
 from picomidi.message.type import MidoMessageType
 
 
@@ -48,3 +50,23 @@ class MidiNote:
         )
 
         return on, off
+
+
+def note_on(absolute_tick: SequencerEvent) -> Message:
+    return Message(
+        MidoMessageType.NOTE_ON.value,
+        note=absolute_tick.note,
+        velocity=absolute_tick.velocity,
+        channel=absolute_tick.channel,
+        time=0,
+    )
+
+
+def note_off(absolute_tick: SequencerEvent) -> Message:
+    return Message(
+        MidoMessageType.NOTE_OFF.value,
+        note=absolute_tick.note,
+        velocity=0,
+        channel=absolute_tick.channel,
+        time=0,
+    )
