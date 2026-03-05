@@ -64,10 +64,30 @@ def convert_absolute_time_to_delta_time(events: list[Any], track: MidiTrack):
 
 
 class MeasureBeats:
-    """Measure Beats"""
+    """Measure Beats with support for multiple time signatures."""
 
+    # Beats per measure for common time signatures
     PER_MEASURE_4_4 = 16
     PER_MEASURE_3_4 = 12
+    PER_MEASURE_2_4 = 8
+    PER_MEASURE_6_8 = 24
+    PER_MEASURE_5_4 = 20
+    PER_MEASURE_7_8 = 28
+
+    # Optional mapping for dynamic resolution if you want to look up by signature
+    _SIG_TO_BEATS = {
+        (4, 4): PER_MEASURE_4_4,
+        (3, 4): PER_MEASURE_3_4,
+        (2, 4): PER_MEASURE_2_4,
+        (6, 8): PER_MEASURE_6_8,
+        (5, 4): PER_MEASURE_5_4,
+        (7, 8): PER_MEASURE_7_8,
+    }
+
+    @classmethod
+    def beats_per_measure(cls, numerator: int, denominator: int) -> int:
+        return cls._SIG_TO_BEATS.get((numerator, denominator), None)
+
 
 
 def bpm_to_tempo_us(bpm: float) -> int:
