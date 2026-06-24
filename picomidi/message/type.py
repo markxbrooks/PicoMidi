@@ -8,6 +8,8 @@ from enum import Enum
 class MidoMessageType(Enum):
     """Mido Message Types"""
 
+    CLOCK = "clock"
+    SYSEX = "sysex"
     NOTE_ON = "note_on"
     NOTE_OFF = "note_off"
     CONTROL_CHANGE = "control_change"
