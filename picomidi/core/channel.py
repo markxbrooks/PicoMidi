@@ -58,9 +58,32 @@ class Channel(IntEnum):
 
         :return: Display channel number (1-16)
         """
-        return self.value + 1
+        return self.display_value(self.value)
+
+    @staticmethod
+    def display_value(value: int) -> int:
+        return value + 1
 
     @classmethod
     def all(cls) -> list["Channel"]:
         """Get all 16 MIDI channels."""
         return list(cls)
+
+    @classmethod
+    def all_channels(cls):
+        return [cls.CH1.value,
+                cls.CH2.value,
+                cls.CH3.value,
+                cls.CH4.value,
+                cls.CH5.value,
+                cls.CH6.value,
+                cls.CH7.value,
+                cls.CH8.value,
+                cls.CH9.value,
+                cls.CH10.value,
+                cls.CH11.value,
+                cls.CH12.value,
+                cls.CH13.value,
+                cls.CH14.value,
+                cls.CH15.value,
+                cls.CH16.value]
