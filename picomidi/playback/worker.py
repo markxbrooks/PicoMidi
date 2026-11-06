@@ -110,6 +110,6 @@ class MidiPlaybackWorker(QObject):
             return
         if self.playback_engine is None:
             return
-        self.playback_engine.process_until_now()
-        if not self.playback_engine._is_playing:
+        # process_until_now() returns True only on the call that reaches the end
+        if self.playback_engine.process_until_now():
             self.finished.emit()

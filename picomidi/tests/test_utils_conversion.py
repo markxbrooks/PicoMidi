@@ -295,19 +295,19 @@ class TestTimeConversions(unittest.TestCase):
         # Formula: int((ms_time - min_time) / (range / 127.0))
         # For 505: int((505 - 10) / (990 / 127)) = int(495 / 7.795) ≈ 63
         self.assertEqual(ms_to_midi_value(10.0), 0)
-        self.assertEqual(ms_to_midi_value(505.0), 63)  # Due to integer conversion
+        self.assertEqual(ms_to_midi_value(505.0), 64)  # 63.5 rounds up
         self.assertEqual(ms_to_midi_value(1000.0), 127)
 
         # Custom range
         # For 1000 with range 0-2000: int((1000 - 0) / (2000 / 127)) = int(1000 / 15.748) ≈ 63
         self.assertEqual(ms_to_midi_value(0.0, 0, 2000), 0)
-        self.assertEqual(ms_to_midi_value(1000.0, 0, 2000), 63)  # Due to integer conversion
+        self.assertEqual(ms_to_midi_value(1000.0, 0, 2000), 64)  # 63.5 rounds up
         self.assertEqual(ms_to_midi_value(2000.0, 0, 2000), 127)
 
         # Edge cases
         # For 200 with range 100-200: int((200 - 100) / (100 / 127)) = int(100 / 0.7874) ≈ 126
         self.assertEqual(ms_to_midi_value(100.0, 100, 200), 0)
-        self.assertEqual(ms_to_midi_value(200.0, 100, 200), 126)  # Due to integer conversion
+        self.assertEqual(ms_to_midi_value(200.0, 100, 200), 127)
 
         # Values outside range are clamped
         self.assertEqual(ms_to_midi_value(5.0, 10, 1000), 0)  # Below min
@@ -323,10 +323,17 @@ class TestTimeConversions(unittest.TestCase):
         for midi_val in test_cases:
             ms = midi_value_to_ms(midi_val, 10, 1000)
             result = ms_to_midi_value(ms, 10, 1000)
-            # Allow ±1 tolerance due to rounding
-            self.assertTrue(
-                abs(result - midi_val) <= 1,
-                f"Round-trip failed for {midi_val}: {ms}ms -> {result}",
+            self.assertEqual(result, midi_val, f"Round-trip failed: {ms}ms")
+
+    def test_round_trip_is_exact_for_every_midi_value(self):
+        """MIDI -> ms/fraction -> MIDI returns the same value (no truncation drift)."""
+        for midi_val in range(128):
+            self.assertEqual(ms_to_midi_value(midi_value_to_ms(midi_val)), midi_val)
+            self.assertEqual(
+                ms_to_midi_value(midi_value_to_ms(midi_val, 10, 5000), 10, 5000), midi_val
+            )
+            self.assertEqual(
+                fraction_to_midi_value(midi_value_to_fraction(midi_val)), midi_val
             )
 
 
@@ -336,17 +343,15 @@ class TestFractionConversions(unittest.TestCase):
     def test_fraction_to_midi_value(self):
         """Test converting fraction to MIDI value."""
         # Default range (0.0-1.0)
-        # Formula: int((fractional_value - minimum) / (range / 127.0))
-        # For 0.5: int((0.5 - 0.0) / (1.0 / 127)) = int(0.5 / 0.007874) ≈ 63
+        # Formula: (fractional_value - minimum) / (range / 127.0), rounded half up
         self.assertEqual(fraction_to_midi_value(0.0), 0)
-        self.assertEqual(fraction_to_midi_value(0.5), 63)  # Due to integer conversion
+        self.assertEqual(fraction_to_midi_value(0.5), 64)  # 63.5 rounds up
         self.assertEqual(fraction_to_midi_value(1.0), 127)
 
         # Custom range (-1.0 to 1.0)
-        # For 0.0 with range -1.0 to 1.0: int((0.0 - (-1.0)) / (2.0 / 127)) = int(1.0 / 0.015748) ≈ 63
-        # This is the center of the range, which maps to MIDI value 63 (not 64 due to integer conversion)
+        # The centre, 0.0, is 63.5 steps from -1.0 and rounds up to 64
         self.assertEqual(fraction_to_midi_value(-1.0, -1.0, 1.0), 0)
-        self.assertEqual(fraction_to_midi_value(0.0, -1.0, 1.0), 63)  # Center maps to 63
+        self.assertEqual(fraction_to_midi_value(0.0, -1.0, 1.0), 64)
         self.assertEqual(fraction_to_midi_value(1.0, -1.0, 1.0), 127)
 
         # Edge cases

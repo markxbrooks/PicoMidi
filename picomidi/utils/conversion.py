@@ -126,7 +126,8 @@ def ms_to_midi_value(ms_time: float, min_time: int = 10, max_time: int = 1000) -
     if time_range == 0:
         return 0
     conversion_factor = time_range / 127.0
-    midi_value = int((ms_time - min_time) / conversion_factor)
+    # Round half up, so midi_value_to_ms() followed by this returns the same value
+    midi_value = int((ms_time - min_time) / conversion_factor + 0.5)
     return clamp_midi_value(midi_value)
 
 
@@ -147,7 +148,8 @@ def fraction_to_midi_value(
     if value_range == 0:
         return 0
     conversion_factor = value_range / 127.0
-    midi_value = int((fractional_value - minimum) / conversion_factor)
+    # Round half up, so midi_value_to_fraction() followed by this returns the same value
+    midi_value = int((fractional_value - minimum) / conversion_factor + 0.5)
     return clamp_midi_value(midi_value)
 
 
