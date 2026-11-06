@@ -81,6 +81,10 @@ class PlaybackEngine:
       state and leave the state unchanged.
     - The engine tracks the notes (and sustain pedals) it has sounded, and
       releases them on pause, stop, seek and mute so nothing hangs.
+    - Unmuting a track or channel restores its controller state (as a seek
+      does), so it plays with the program, volume and bend it would have had.
+    - set_track_velocity_scale() scales a track's note-on velocities as they
+      are sent (the file is not changed).
     - Starting or seeking mid-file restores ("chases") program/bank, controller
       and pitch-bend values from earlier in the file, sending only values that
       differ from what the engine last sent.
@@ -129,9 +133,11 @@ class PlaybackEngine:
 
         self._muted_tracks: set[int] = set()
         self._muted_channels: set[int] = set()
+        # track_index -> note-on velocity factor (absent = 1.0)
+        self._velocity_scales: dict[int, float] = {}
 
-        # (channel, note) -> track_index for notes sounded and not yet released
-        self._held_notes: dict[tuple[int, int], int] = {}
+        # (channel, note) -> tracks that sounded it and have not released it
+        self._held_notes: dict[tuple[int, int], set[int]] = {}
         # channel -> track_index for sustain pedals left down
         self._sustained_channels: dict[int, int] = {}
         # Last value sent for each chased key, e.g. ("program", ch) -> 5
@@ -706,15 +712,29 @@ class PlaybackEngine:
         if key is not None:
             self._sent_controllers[key] = self._chase_value(event.message)
         if self.on_event:
-            self.on_event(event.message)
+            self.on_event(self._scaled(event))
+
+    def _scaled(self, event: ScheduledEvent) -> mido.Message:
+        """The event's message with the track's velocity scale applied."""
+        msg = event.message
+        scale = self._velocity_scales.get(event.track_index)
+        if scale is None or msg.type != "note_on" or msg.velocity == 0:
+            return msg
+        # At least 1: velocity 0 would be a note-off
+        return msg.copy(velocity=max(1, min(127, round(msg.velocity * scale))))
 
     def _track_sounding(self, event: ScheduledEvent) -> None:
         """Remember which notes and sustain pedals are down so they can be released."""
         msg = event.message
+        key = (getattr(msg, "channel", None), getattr(msg, "note", None))
         if msg.type == "note_on" and msg.velocity > 0:
-            self._held_notes[(msg.channel, msg.note)] = event.track_index
+            self._held_notes.setdefault(key, set()).add(event.track_index)
         elif msg.type in ("note_off", "note_on"):
-            self._held_notes.pop((msg.channel, msg.note), None)
+            tracks = self._held_notes.get(key)
+            if tracks is not None:
+                tracks.discard(event.track_index)
+                if not tracks:
+                    del self._held_notes[key]
         elif msg.type == "control_change" and msg.control == CC_SUSTAIN:
             if msg.value >= SUSTAIN_ON_THRESHOLD:
                 self._sustained_channels[msg.channel] = event.track_index
@@ -740,9 +760,13 @@ class PlaybackEngine:
                 track_index is None or track == track_index
             )
 
-        for (ch, note), track in list(self._held_notes.items()):
-            if matches(ch, track):
-                self._send(mido.Message("note_off", channel=ch, note=note, velocity=0))
+        for (ch, note), tracks in list(self._held_notes.items()):
+            released = {track for track in tracks if matches(ch, track)}
+            if not released:
+                continue
+            self._send(mido.Message("note_off", channel=ch, note=note, velocity=0))
+            tracks -= released
+            if not tracks:
                 del self._held_notes[(ch, note)]
         for ch, track in list(self._sustained_channels.items()):
             if matches(ch, track):
@@ -788,15 +812,46 @@ class PlaybackEngine:
         return True
 
     def mute_channel(self, channel: int, muted: bool) -> None:
+        """Mute or unmute a channel (0-15); calls that change nothing do nothing."""
+        if muted == (channel in self._muted_channels):
+            return
         if muted:
             self._muted_channels.add(channel)
             self.release_held_notes(channel=channel)
         else:
             self._muted_channels.discard(channel)
+            self._restore_unmuted()
 
     def mute_track(self, track_index: int, muted: bool) -> None:
+        """Mute or unmute a track; calls that change nothing do nothing."""
+        if muted == (track_index in self._muted_tracks):
+            return
         if muted:
             self._muted_tracks.add(track_index)
             self.release_held_notes(track_index=track_index)
         else:
             self._muted_tracks.discard(track_index)
+            self._restore_unmuted()
+
+    def set_track_velocity_scale(self, track_index: int, scale: float) -> None:
+        """
+        Scale a track's note-on velocities by *scale* (1.0 = as in the file).
+
+        Applies to notes sent from now on; sounding notes keep their velocity.
+        """
+        if scale == 1.0:
+            self._velocity_scales.pop(track_index, None)
+        else:
+            self._velocity_scales[track_index] = max(0.0, float(scale))
+
+    def _restore_unmuted(self) -> None:
+        """
+        Send the controller state the unmuted events left (program, CCs, bend).
+
+        Muted events were not sent, so the synth still has what the other
+        tracks (or nothing) set; chasing sends only what differs.
+        """
+        if self._is_playing:
+            self._chase()
+        elif self.midi_file is not None:
+            self._chase_pending = True
