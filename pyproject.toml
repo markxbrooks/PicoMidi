@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "picomidi"
-version = "0.1.2"
+version = "0.2.0"
 description = "A lightweight, focused MIDI library for Python"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -40,13 +40,16 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/picomidi"  # Update with your repository URL
-Documentation = "https://github.com/yourusername/picomidi#readme"  # Update if you have docs
-Repository = "https://github.com/yourusername/picomidi"  # Update with your repository URL
-Issues = "https://github.com/yourusername/picomidi/issues"  # Update with your repository URL
+Homepage = "https://github.com/markxbrooks/PicoMidi"
+Documentation = "https://github.com/markxbrooks/PicoMidi#readme"
+Repository = "https://github.com/markxbrooks/PicoMidi"
+Issues = "https://github.com/markxbrooks/PicoMidi/issues"
 
-[tool.setuptools]
-packages = ["picomidi"]
+[tool.setuptools.packages.find]
+# All subpackages (core, playback, sysex, ...): listing only "picomidi" shipped
+# the top-level package alone, as in the 0.1.2 wheel
+include = ["picomidi*"]
+exclude = ["picomidi.tests*"]
 
 [tool.setuptools.package-data]
 picomidi = ["py.typed"]  # For type checking support

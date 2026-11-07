@@ -8,7 +8,7 @@ PicMidi provides core MIDI protocol functionality including:
 - Timing and tempo calculations
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Constants
 from picomidi.constant import Midi
