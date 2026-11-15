@@ -24,6 +24,9 @@ from picomidi.message.type import MidoMessageType, MidoMessageAttrs
 
 CC_BANK_SELECT_MSB = 0
 CC_MODULATION = 1
+CC_VOLUME = 7
+CC_PAN = 10
+CC_EXPRESSION = 11
 CC_BANK_SELECT_LSB = 32
 CC_SUSTAIN = 64
 CC_ALL_SOUND_OFF = 120
@@ -33,8 +36,14 @@ SUSTAIN_ON_THRESHOLD = 64
 # Not restored on seek: RPN/NRPN data entry is order-dependent, 120+ are channel mode messages
 UNCHASED_CONTROLS = frozenset({6, 38, 96, 97, 98, 99, 100, 101})
 FIRST_CHANNEL_MODE_CONTROL = 120
-# Restored to these values on seek when the target position has no earlier value
+# Baseline per channel when the file has no earlier value (GM-ish defaults)
 CHASE_DEFAULTS = {
+    ("cc", CC_BANK_SELECT_MSB): 0,
+    ("cc", CC_BANK_SELECT_LSB): 0,
+    ("program",): 0,
+    ("cc", CC_VOLUME): 100,
+    ("cc", CC_PAN): 64,
+    ("cc", CC_EXPRESSION): 127,
     ("cc", CC_MODULATION): 0,
     ("cc", CC_SUSTAIN): 0,
     ("pitchwheel",): 0,
@@ -43,6 +52,7 @@ CHASE_DEFAULTS = {
 MIDI_CLOCKS_PER_BEAT = 24
 SONG_POSITION_PER_BEAT = 4  # Song Position Pointer counts 16th notes
 SONG_POSITION_MAX = 16383
+CONTROLLER_SNAPSHOT_INTERVAL = 512
 
 SPEED_MIN = 0.25
 SPEED_MAX = 2.0
@@ -55,6 +65,15 @@ class ScheduledEvent:
     absolute_tick: int
     message: mido.Message
     track_index: int = 0
+
+
+@dataclass(frozen=True)
+class ControllerSnapshot:
+    """Controller state at a point in the event list (for fast chase)."""
+
+    event_index: int
+    # chase key -> (value, track_index that last set it)
+    state: tuple[tuple[tuple, int, int], ...]
 
 
 class TransportState(Enum):
