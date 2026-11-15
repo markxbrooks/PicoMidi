@@ -18,7 +18,6 @@ from typing import Any, Callable, List, Optional
 
 import mido
 from mido import Message
-from scipy.constants import value
 
 from picomidi import MidiTempo, Channel
 from picomidi.message.type import MidoMessageType, MidoMessageAttrs
@@ -35,7 +34,11 @@ SUSTAIN_ON_THRESHOLD = 64
 UNCHASED_CONTROLS = frozenset({6, 38, 96, 97, 98, 99, 100, 101})
 FIRST_CHANNEL_MODE_CONTROL = 120
 # Restored to these values on seek when the target position has no earlier value
-CHASE_DEFAULTS = {("cc", CC_MODULATION): 0, ("cc", CC_SUSTAIN): 0, (MidoMessageType.PITCH_WHEEL,): 0}
+CHASE_DEFAULTS = {
+    ("cc", CC_MODULATION): 0,
+    ("cc", CC_SUSTAIN): 0,
+    ("pitchwheel",): 0,
+}
 
 MIDI_CLOCKS_PER_BEAT = 24
 SONG_POSITION_PER_BEAT = 4  # Song Position Pointer counts 16th notes
@@ -70,7 +73,7 @@ def mido_send_channel_cc(ch: int, control: int, value: int) -> Message:
 
 class PlaybackEngine:
     """
-    Pure MIDI playback name.
+    Pure MIDI playback engine.
 
     No Qt. No UI. No threads. Drives playback using absolute tick scheduling
     with a single merged event list and segment-wise tempo.
@@ -648,7 +651,7 @@ class PlaybackEngine:
         if msg.type == MidoMessageType.PITCH_WHEEL:
             return "pitchwheel", msg.channel
         if (
-            msg.type == MidoMessageType.PROGRAM_CHANGE
+            msg.type == MidoMessageType.CONTROL_CHANGE
             and msg.control not in UNCHASED_CONTROLS
             and msg.control < FIRST_CHANNEL_MODE_CONTROL
         ):
@@ -690,8 +693,9 @@ class PlaybackEngine:
             for key in sorted(k for k in target if k[0] == "cc" and k[1] == ch):
                 if key not in bank_keys and differs(key):
                     self._dispatch(target[key])
-            if differs((MidoMessageType.PITCH_WHEEL, ch)):
-                self._dispatch(target[(MidoMessageType.PITCH_WHEEL, ch)])
+            pitch_key = ("pitchwheel", ch)
+            if differs(pitch_key):
+                self._dispatch(target[pitch_key])
             self._restore_defaults(ch, target)
 
     def _restore_defaults(self, channel: int, target: dict) -> None:
@@ -700,11 +704,16 @@ class PlaybackEngine:
             key = (kind[0], channel, *kind[1:])
             if key in target or self._sent_controllers.get(key, default) == default:
                 continue
-            if kind[0] == MidoMessageType.PITCH_WHEEL:
-                msg = mido.Message(MidoMessageType.PITCH_WHEEL, channel=channel, pitch=default)
+            if kind[0] == "pitchwheel":
+                msg = mido.Message(
+                    MidoMessageType.PITCH_WHEEL, channel=channel, pitch=default
+                )
             else:
                 msg = mido.Message(
-                    MidoMessageType.CONTROL_CHANGE, channel=channel, control=kind[1], value=default
+                    MidoMessageType.CONTROL_CHANGE,
+                    channel=channel,
+                    control=kind[1],
+                    value=default,
                 )
             self._send(msg)
             self._sent_controllers[key] = default

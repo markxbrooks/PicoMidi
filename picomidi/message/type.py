@@ -11,8 +11,13 @@ class MidoMessageAttrs:
     NOTE = "note"
 
 
-class MidoMessageType(Enum):
-    """Mido Message Types"""
+class MidoMessageType(str, Enum):
+    """
+    Mido message type strings.
+
+    ``str`` mixin so values compare equal to mido's ``msg.type`` and can be
+    passed directly to ``mido.Message(...)``.
+    """
 
     CLOCK = "clock"
     SYSEX = "sysex"
@@ -26,8 +31,9 @@ class MidoMessageType(Enum):
     SET_TEMPO = "set_tempo"
 
 
-class MidoMetaMessageType(Enum):
-    """Mido Meta Message Types"""
+class MidoMetaMessageType(str, Enum):
+    """Mido meta message type strings."""
+
     TRACK_NAME = "track_name"
     END_OF_TRACK = "end_of_track"
     SET_TEMPO = "set_tempo"
