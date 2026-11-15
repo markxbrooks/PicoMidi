@@ -5,6 +5,12 @@ Types for Mido Messages
 from enum import Enum
 
 
+class MidoMessageAttrs:
+    """Mido Message Attributes"""
+    CHANNEL = "channel"
+    NOTE = "note"
+
+
 class MidoMessageType(Enum):
     """Mido Message Types"""
 

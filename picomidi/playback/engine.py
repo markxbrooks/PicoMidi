@@ -17,8 +17,11 @@ from enum import Enum, auto
 from typing import Any, Callable, List, Optional
 
 import mido
+from mido import Message
+from scipy.constants import value
 
-from picomidi import MidiTempo
+from picomidi import MidiTempo, Channel
+from picomidi.message.type import MidoMessageType, MidoMessageAttrs
 
 CC_BANK_SELECT_MSB = 0
 CC_MODULATION = 1
@@ -32,7 +35,7 @@ SUSTAIN_ON_THRESHOLD = 64
 UNCHASED_CONTROLS = frozenset({6, 38, 96, 97, 98, 99, 100, 101})
 FIRST_CHANNEL_MODE_CONTROL = 120
 # Restored to these values on seek when the target position has no earlier value
-CHASE_DEFAULTS = {("cc", CC_MODULATION): 0, ("cc", CC_SUSTAIN): 0, ("pitchwheel",): 0}
+CHASE_DEFAULTS = {("cc", CC_MODULATION): 0, ("cc", CC_SUSTAIN): 0, (MidoMessageType.PITCH_WHEEL,): 0}
 
 MIDI_CLOCKS_PER_BEAT = 24
 SONG_POSITION_PER_BEAT = 4  # Song Position Pointer counts 16th notes
@@ -59,27 +62,33 @@ class TransportState(Enum):
     PAUSED = auto()
 
 
+def mido_send_channel_cc(ch: int, control: int, value: int) -> Message:
+    return mido.Message(
+        MidoMessageType.CONTROL_CHANGE, channel=ch, control=control, value=value
+    )
+
+
 class PlaybackEngine:
     """
-    Pure MIDI playback engine.
+    Pure MIDI playback name.
 
     No Qt. No UI. No threads. Drives playback using absolute tick scheduling
     with a single merged event list and segment-wise tempo.
 
-    How the engine is driven:
+    How the name is driven:
     - The owner (e.g. a worker or controller) loads a file with load_file(),
       then calls start(start_tick) to begin playback.
     - On a timer or tick (e.g. every 5–20 ms), the owner calls
-      process_until_now(). The engine advances over events whose scheduled
+      process_until_now(). The name advances over events whose scheduled
       time has passed and invokes the on_event callback for each that passes
       _should_send (mute/suppress). It returns True exactly once, on the call
       where playback reaches the end of the file.
-    - The owner sets engine.on_event to a callable (e.g. lambda msg: send(msg))
+    - The owner sets name.on_event to a callable (e.g. lambda msg: send(msg))
       so that messages are actually sent (e.g. to a MIDI port).
     - Transport: pause()/resume() keep the position; stop() keeps the position
       (call seek_tick(0) to rewind); seek_tick()/seek_seconds() work in any
       state and leave the state unchanged.
-    - The engine tracks the notes (and sustain pedals) it has sounded, and
+    - The name tracks the notes (and sustain pedals) it has sounded, and
       releases them on pause, stop, seek and mute so nothing hangs.
     - Unmuting a track or channel restores its controller state (as a seek
       does), so it plays with the program, volume and bend it would have had.
@@ -87,10 +96,10 @@ class PlaybackEngine:
       are sent (the file is not changed).
     - Starting or seeking mid-file restores ("chases") program/bank, controller
       and pitch-bend values from earlier in the file, sending only values that
-      differ from what the engine last sent.
+      differ from what the name last sent.
     - Optional: loop (whole file or A–B), playback speed, MIDI clock out.
 
-    The engine is not thread-safe; an owner driving it from another thread
+    The name is not thread-safe; an owner driving it from another thread
     must serialise calls (e.g. with a lock).
     """
 
@@ -554,7 +563,7 @@ class PlaybackEngine:
         Send every event (and MIDI clock) that is due.
 
         :return: True on the call where playback reaches the end of the file
-            (the engine is then STOPPED with its position at the end).
+            (the name is then STOPPED with its position at the end).
         """
         if not self._is_playing:
             return False
@@ -634,23 +643,23 @@ class PlaybackEngine:
 
     @staticmethod
     def _chase_key(msg: mido.Message) -> Optional[tuple]:
-        if msg.type == "program_change":
-            return ("program", msg.channel)
-        if msg.type == "pitchwheel":
-            return ("pitchwheel", msg.channel)
+        if msg.type == MidoMessageType.PROGRAM_CHANGE:
+            return "program", msg.channel
+        if msg.type == MidoMessageType.PITCH_WHEEL:
+            return "pitchwheel", msg.channel
         if (
-            msg.type == "control_change"
+            msg.type == MidoMessageType.PROGRAM_CHANGE
             and msg.control not in UNCHASED_CONTROLS
             and msg.control < FIRST_CHANNEL_MODE_CONTROL
         ):
-            return ("cc", msg.channel, msg.control)
+            return "cc", msg.channel, msg.control
         return None
 
     @staticmethod
     def _chase_value(msg: mido.Message) -> int:
-        if msg.type == "program_change":
+        if msg.type == MidoMessageType.PROGRAM_CHANGE:
             return msg.program
-        if msg.type == "pitchwheel":
+        if msg.type == MidoMessageType.PITCH_WHEEL:
             return msg.pitch
         return msg.value
 
@@ -681,8 +690,8 @@ class PlaybackEngine:
             for key in sorted(k for k in target if k[0] == "cc" and k[1] == ch):
                 if key not in bank_keys and differs(key):
                     self._dispatch(target[key])
-            if differs(("pitchwheel", ch)):
-                self._dispatch(target[("pitchwheel", ch)])
+            if differs((MidoMessageType.PITCH_WHEEL, ch)):
+                self._dispatch(target[(MidoMessageType.PITCH_WHEEL, ch)])
             self._restore_defaults(ch, target)
 
     def _restore_defaults(self, channel: int, target: dict) -> None:
@@ -691,11 +700,11 @@ class PlaybackEngine:
             key = (kind[0], channel, *kind[1:])
             if key in target or self._sent_controllers.get(key, default) == default:
                 continue
-            if kind[0] == "pitchwheel":
-                msg = mido.Message("pitchwheel", channel=channel, pitch=default)
+            if kind[0] == MidoMessageType.PITCH_WHEEL:
+                msg = mido.Message(MidoMessageType.PITCH_WHEEL, channel=channel, pitch=default)
             else:
                 msg = mido.Message(
-                    "control_change", channel=channel, control=kind[1], value=default
+                    MidoMessageType.CONTROL_CHANGE, channel=channel, control=kind[1], value=default
                 )
             self._send(msg)
             self._sent_controllers[key] = default
@@ -726,16 +735,16 @@ class PlaybackEngine:
     def _track_sounding(self, event: ScheduledEvent) -> None:
         """Remember which notes and sustain pedals are down so they can be released."""
         msg = event.message
-        key = (getattr(msg, "channel", None), getattr(msg, "note", None))
-        if msg.type == "note_on" and msg.velocity > 0:
+        key = (getattr(msg, MidoMessageAttrs.CHANNEL, None), getattr(msg, MidoMessageAttrs.NOTE, None))
+        if msg.type == MidoMessageType.NOTE_ON and msg.velocity > 0:
             self._held_notes.setdefault(key, set()).add(event.track_index)
-        elif msg.type in ("note_off", "note_on"):
+        elif msg.type in (MidoMessageType.NOTE_OFF, MidoMessageType.NOTE_ON):
             tracks = self._held_notes.get(key)
             if tracks is not None:
                 tracks.discard(event.track_index)
                 if not tracks:
                     del self._held_notes[key]
-        elif msg.type == "control_change" and msg.control == CC_SUSTAIN:
+        elif msg.type == MidoMessageType.CONTROL_CHANGE and msg.control == CC_SUSTAIN:
             if msg.value >= SUSTAIN_ON_THRESHOLD:
                 self._sustained_channels[msg.channel] = event.track_index
             else:
@@ -749,7 +758,7 @@ class PlaybackEngine:
         self, channel: Optional[int] = None, track_index: Optional[int] = None
     ) -> None:
         """
-        Send note-off (and sustain-off) for what the engine has sounded.
+        Send note-off (and sustain-off) for what the name has sounded.
 
         :param channel: Only release notes on this channel (0-15)
         :param track_index: Only release notes sounded by this track
@@ -764,34 +773,27 @@ class PlaybackEngine:
             released = {track for track in tracks if matches(ch, track)}
             if not released:
                 continue
-            self._send(mido.Message("note_off", channel=ch, note=note, velocity=0))
+            self._send(mido.Message(MidoMessageType.NOTE_OFF, channel=ch, note=note, velocity=0))
             tracks -= released
             if not tracks:
                 del self._held_notes[(ch, note)]
         for ch, track in list(self._sustained_channels.items()):
             if matches(ch, track):
-                self._send(
-                    mido.Message(
-                        "control_change", channel=ch, control=CC_SUSTAIN, value=0
-                    )
-                )
+                control = CC_SUSTAIN
+                value = 0
+                self._send(mido_send_channel_cc(ch, control, value))
                 del self._sustained_channels[ch]
                 self._sent_controllers[("cc", ch, CC_SUSTAIN)] = 0
 
     def all_notes_off(self) -> None:
         """Panic: release tracked notes, then All Sound Off / All Notes Off on all channels."""
         self.release_held_notes()
-        for ch in range(16):
-            self._send(
-                mido.Message(
-                    "control_change", channel=ch, control=CC_ALL_SOUND_OFF, value=0
-                )
-            )
-            self._send(
-                mido.Message(
-                    "control_change", channel=ch, control=CC_ALL_NOTES_OFF, value=0
-                )
-            )
+        for ch in range(Channel.TOTAL_CHANNELS):
+            control = CC_ALL_SOUND_OFF
+            midi_value = 0
+            self._send(mido_send_channel_cc(ch, control, midi_value))
+            control = CC_ALL_NOTES_OFF
+            self._send(mido_send_channel_cc(ch, control, midi_value))
 
     def _should_send(self, event: ScheduledEvent) -> bool:
         msg = event.message

@@ -105,7 +105,7 @@ class MidiPlaybackWorker(QObject):
 
     @Slot()
     def do_work(self) -> None:
-        """Drive PlaybackEngine; engine calls on_event (send) and handles tempo/mute."""
+        """Drive PlaybackEngine; name calls on_event (send) and handles tempo/mute."""
         if self.should_stop:
             return
         if self.playback_engine is None:
