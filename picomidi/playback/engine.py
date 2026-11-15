@@ -97,31 +97,38 @@ class PlaybackEngine:
     No Qt. No UI. No threads. Drives playback using absolute tick scheduling
     with a single merged event list and segment-wise tempo.
 
-    How the name is driven:
+    How the engine is driven:
     - The owner (e.g. a worker or controller) loads a file with load_file(),
       then calls start(start_tick) to begin playback.
     - On a timer or tick (e.g. every 5–20 ms), the owner calls
-      process_until_now(). The name advances over events whose scheduled
+      process_until_now(). The engine advances over events whose scheduled
       time has passed and invokes the on_event callback for each that passes
       _should_send (mute/suppress). It returns True exactly once, on the call
       where playback reaches the end of the file.
-    - The owner sets name.on_event to a callable (e.g. lambda msg: send(msg))
+    - The owner sets engine.on_event to a callable (e.g. lambda msg: send(msg))
       so that messages are actually sent (e.g. to a MIDI port).
     - Transport: pause()/resume() keep the position; stop() keeps the position
       (call seek_tick(0) to rewind); seek_tick()/seek_seconds() work in any
       state and leave the state unchanged.
-    - The name tracks the notes (and sustain pedals) it has sounded, and
+    - The engine tracks the notes (and sustain pedals) it has sounded, and
       releases them on pause, stop, seek and mute so nothing hangs.
     - Unmuting a track or channel restores its controller state (as a seek
       does), so it plays with the program, volume and bend it would have had.
     - set_track_velocity_scale() scales a track's note-on velocities as they
-      are sent (the file is not changed).
+      are sent (the file is not changed). A scale of 0.0 suppresses note-ons.
     - Starting or seeking mid-file restores ("chases") program/bank, controller
       and pitch-bend values from earlier in the file, sending only values that
-      differ from what the name last sent.
+      differ from what the engine last sent. Missing values use a per-channel
+      baseline (defaults), so backwards seeks do not leave stale synth state.
     - Optional: loop (whole file or A–B), playback speed, MIDI clock out.
 
-    The name is not thread-safe; an owner driving it from another thread
+    Shared-channel limitation: MIDI note-off and sustain are channel-wide.
+    When two tracks share a channel and the same pitch (or both hold sustain),
+    the engine keeps logical per-track ownership and only sends a device
+    note-off / sustain-off when no track still owns that state. Independent
+    track mute cannot fully isolate parts that share channel and pitch.
+
+    The engine is not thread-safe; an owner driving it from another thread
     must serialise calls (e.g. with a lock).
     """
 
@@ -139,12 +146,15 @@ class PlaybackEngine:
         self._time_map_seconds: List[float] = []
         # (tick, numerator, denominator), sorted by tick
         self._time_signatures: List[tuple[int, int, int]] = [(0, 4, 4)]
+        self._time_signature_ticks: List[int] = [0]
 
         self.events: List[ScheduledEvent] = []
         self._event_ticks: List[int] = (
             []
         )  # Cached ticks for binary search; set in _build_event_list
         self._event_seconds: List[float] = []  # Absolute time of each event
+        self._controller_snapshots: List[ControllerSnapshot] = []
+        self._snapshot_indexes: List[int] = []
         self.event_index: int = 0
         self.length_ticks: int = 0
 
@@ -160,6 +170,9 @@ class PlaybackEngine:
 
         self.send_clock: bool = False
         self._next_clock_tick: float = 0.0
+        self._next_clock_seconds: float = 0.0
+        self._clock_segment_end_tick: float = math.inf
+        self._clock_seconds_per_pulse: float = 0.0
         self._clock_position_dirty = False  # Song Position Pointer needed on next run
 
         self._muted_tracks: set[int] = set()
@@ -167,10 +180,10 @@ class PlaybackEngine:
         # track_index -> note-on velocity factor (absent = 1.0)
         self._velocity_scales: dict[int, float] = {}
 
-        # (channel, note) -> tracks that sounded it and have not released it
-        self._held_notes: dict[tuple[int, int], set[int]] = {}
-        # channel -> track_index for sustain pedals left down
-        self._sustained_channels: dict[int, int] = {}
+        # (channel, note) -> {track_index: outstanding note-on count}
+        self._held_notes: dict[tuple[int, int], dict[int, int]] = {}
+        # channel -> tracks that currently have sustain >= 64
+        self._sustained_channels: dict[int, set[int]] = {}
         # Last value sent for each chased key, e.g. ("program", ch) -> 5
         self._sent_controllers: dict[tuple, int] = {}
         self._chase_pending = False
@@ -214,11 +227,18 @@ class PlaybackEngine:
         self._is_playing = False
 
     def load_file(self, midi_file: mido.MidiFile) -> None:
+        if getattr(midi_file, "type", 1) == 2:
+            raise ValueError(
+                "MIDI Type 2 (independent sequences) is not supported; "
+                "use Type 0 or Type 1"
+            )
+        self.release_held_notes()
         self.midi_file = midi_file
         self.ticks_per_beat = midi_file.ticks_per_beat
 
         self._build_tempo_map()
         self._build_event_list()
+        self._build_controller_snapshots()
         self._build_time_map()
         self._event_seconds = [self._tick_to_seconds(t) for t in self._event_ticks]
         self.loop_range = None
@@ -226,6 +246,7 @@ class PlaybackEngine:
 
     def reset(self) -> None:
         """Reset playback state (position, play flag). Mute/suppress settings are unchanged."""
+        self.release_held_notes()
         self.event_index = 0
         self.start_tick = 0
         self._start_time = 0.0
@@ -266,6 +287,7 @@ class PlaybackEngine:
         self._time_signatures = [
             (tick, num, den) for tick, (num, den) in sorted(signatures.items())
         ]
+        self._time_signature_ticks = [t for t, _, _ in self._time_signatures]
 
     def _build_event_list(self) -> None:
         self.events.clear()
@@ -293,6 +315,23 @@ class PlaybackEngine:
 
         # cache ticks for binary search
         self._event_ticks = [e.absolute_tick for e in self.events]
+
+    def _build_controller_snapshots(self) -> None:
+        """Periodic chase-state snapshots for O(log N + K) seeking."""
+        self._controller_snapshots = []
+        self._snapshot_indexes = []
+        state: dict[tuple, tuple[int, int]] = {}
+        for i, event in enumerate(self.events):
+            key = self._chase_key(event.message)
+            if key is not None:
+                state[key] = (self._chase_value(event.message), event.track_index)
+            if (i + 1) % CONTROLLER_SNAPSHOT_INTERVAL == 0:
+                snap = ControllerSnapshot(
+                    event_index=i + 1,
+                    state=tuple((k, v, t) for k, (v, t) in state.items()),
+                )
+                self._controller_snapshots.append(snap)
+                self._snapshot_indexes.append(snap.event_index)
 
     # --- Position -------------------------------------------------------------
 
@@ -365,7 +404,7 @@ class PlaybackEngine:
 
     def time_signature_at_tick(self, tick: int) -> tuple[int, int]:
         """(numerator, denominator) in effect at *tick*."""
-        idx = bisect.bisect_right([t for t, _, _ in self._time_signatures], tick) - 1
+        idx = bisect.bisect_right(self._time_signature_ticks, tick) - 1
         _, num, den = self._time_signatures[max(0, idx)]
         return num, den
 
@@ -384,6 +423,8 @@ class PlaybackEngine:
     # --- Transport ------------------------------------------------------------
 
     def start(self, start_tick: int = 0) -> None:
+        if self._is_playing:
+            self.release_held_notes()
         self._position_at_tick(start_tick)
         self._start_time = self._now()
         self._set_state(TransportState.PLAYING)
@@ -396,6 +437,7 @@ class PlaybackEngine:
                 self._send(mido.Message("continue"))
             else:
                 self._next_clock_tick = 0.0
+                self._recompute_clock_deadline()
                 self._send(mido.Message("start"))
         self._clock_position_dirty = False
 
@@ -428,6 +470,9 @@ class PlaybackEngine:
         self._hold_position()
         self._set_state(TransportState.PAUSED)
         self.release_held_notes()
+        # Controllers (including sustain) must be restored on resume without
+        # re-striking notes that were sounding at the pause point.
+        self._chase_pending = True
         if self.send_clock:
             self._send(mido.Message("stop"))
 
@@ -585,7 +630,7 @@ class PlaybackEngine:
         Send every event (and MIDI clock) that is due.
 
         :return: True on the call where playback reaches the end of the file
-            (the name is then STOPPED with its position at the end).
+            (the engine is then STOPPED with its position at the end).
         """
         if not self._is_playing:
             return False
@@ -612,7 +657,7 @@ class PlaybackEngine:
     def _send_due(self, position: float, limit: Optional[float]) -> None:
         """Send events and clock due at *position*, in time order, before *limit*."""
         events_count = len(self.events)
-        clock_time = self._next_clock_seconds()
+        clock_time = self._next_clock_deadline()
         while True:
             event_time = (
                 self._event_seconds[self.event_index]
@@ -624,16 +669,41 @@ class PlaybackEngine:
                 return
             if clock_time <= event_time:
                 self._send(mido.Message("clock"))
-                self._next_clock_tick += self.ticks_per_beat / MIDI_CLOCKS_PER_BEAT
-                clock_time = self._next_clock_seconds()
+                self._advance_clock_pulse()
+                clock_time = self._next_clock_deadline()
             else:
                 self._dispatch(self.events[self.event_index])
                 self.event_index += 1
 
-    def _next_clock_seconds(self) -> float:
+    def _next_clock_deadline(self) -> float:
         if not self.send_clock:
             return math.inf
-        return self._tick_to_seconds(self._next_clock_tick)
+        return self._next_clock_seconds
+
+    def _recompute_clock_deadline(self) -> None:
+        """Set the next clock deadline and tempo-segment end from `_next_clock_tick`."""
+        self._next_clock_seconds = self._tick_to_seconds(self._next_clock_tick)
+        idx = bisect.bisect_right(self._tempo_ticks, self._next_clock_tick)
+        if idx < len(self._tempo_ticks):
+            self._clock_segment_end_tick = float(self._tempo_ticks[idx])
+        else:
+            self._clock_segment_end_tick = math.inf
+        tempo = self._get_tempo_at_tick(int(self._next_clock_tick))
+        pulse = self.ticks_per_beat / MIDI_CLOCKS_PER_BEAT
+        self._clock_seconds_per_pulse = mido.tick2second(
+            pulse, self.ticks_per_beat, tempo
+        )
+
+    def _advance_clock_pulse(self) -> None:
+        """Advance one MIDI clock pulse, using incremental time inside a tempo segment."""
+        pulse = self.ticks_per_beat / MIDI_CLOCKS_PER_BEAT
+        next_tick = self._next_clock_tick + pulse
+        if next_tick <= self._clock_segment_end_tick + 1e-9:
+            self._next_clock_tick = next_tick
+            self._next_clock_seconds += self._clock_seconds_per_pulse
+        else:
+            self._next_clock_tick = next_tick
+            self._recompute_clock_deadline()
 
     def _wrap_loop(self, overshoot: float) -> None:
         """Jump from the loop end back to the loop start."""
@@ -660,6 +730,7 @@ class PlaybackEngine:
         self._next_clock_tick = position * sixteenth
         while self._next_clock_tick < self.start_tick:
             self._next_clock_tick += clock_ticks
+        self._recompute_clock_deadline()
 
     # --- Chase ----------------------------------------------------------------
 
@@ -685,98 +756,223 @@ class PlaybackEngine:
             return msg.pitch
         return msg.value
 
+    @staticmethod
+    def _default_key(kind: tuple, channel: int) -> tuple:
+        return (kind[0], channel, *kind[1:])
+
+    def _channel_baseline(self, channel: int) -> dict[tuple, int]:
+        return {
+            self._default_key(kind, channel): default
+            for kind, default in CHASE_DEFAULTS.items()
+        }
+
+    def _controller_state_before(self, event_index: int) -> dict[tuple, tuple[int, int]]:
+        """
+        Last controller value and source track for each key before *event_index*.
+
+        Uses periodic snapshots then replays the short tail.
+        """
+        idx = bisect.bisect_right(self._snapshot_indexes, event_index) - 1
+        if idx >= 0:
+            snap = self._controller_snapshots[idx]
+            start = snap.event_index
+            state = {key: (value, track) for key, value, track in snap.state}
+        else:
+            start = 0
+            state = {}
+        for event in self.events[start:event_index]:
+            key = self._chase_key(event.message)
+            if key is not None:
+                state[key] = (self._chase_value(event.message), event.track_index)
+        return state
+
     def _chase(self) -> None:
         """Send the controller state in effect at the position (changes only)."""
-        target: dict[tuple, ScheduledEvent] = {}
-        for event in self.events[: self.event_index]:
-            key = self._chase_key(event.message)
-            if key is not None and self._should_send(event):
-                target[key] = event
-
-        def differs(key: tuple) -> bool:
-            event = target.get(key)
-            return event is not None and self._sent_controllers.get(
-                key
-            ) != self._chase_value(event.message)
-
-        channels = {key[1] for key in target} | {key[1] for key in self._sent_controllers}
-        for ch in sorted(channels):
-            bank_keys = [("cc", ch, CC_BANK_SELECT_MSB), ("cc", ch, CC_BANK_SELECT_LSB)]
-            program_key = ("program", ch)
-            if program_key in target and any(
-                differs(k) for k in bank_keys + [program_key]
-            ):
-                for key in bank_keys + [program_key]:
-                    if key in target:
-                        self._dispatch(target[key])
-            for key in sorted(k for k in target if k[0] == "cc" and k[1] == ch):
-                if key not in bank_keys and differs(key):
-                    self._dispatch(target[key])
-            pitch_key = ("pitchwheel", ch)
-            if differs(pitch_key):
-                self._dispatch(target[pitch_key])
-            self._restore_defaults(ch, target)
-
-    def _restore_defaults(self, channel: int, target: dict) -> None:
-        """Reset bend/modulation/sustain left non-default where the file has no value yet."""
-        for kind, default in CHASE_DEFAULTS.items():
-            key = (kind[0], channel, *kind[1:])
-            if key in target or self._sent_controllers.get(key, default) == default:
+        raw = self._controller_state_before(self.event_index)
+        # Mute/suppress-aware desired values from file events
+        from_file: dict[tuple, int] = {}
+        for key, (value, track_index) in raw.items():
+            channel = key[1]
+            if track_index in self._muted_tracks:
                 continue
-            if kind[0] == "pitchwheel":
-                msg = mido.Message(
-                    MidoMessageType.PITCH_WHEEL, channel=channel, pitch=default
-                )
+            if channel in self._muted_channels:
+                continue
+            if self.suppress_program_changes and key[0] == "program":
+                continue
+            if self.suppress_control_changes and key[0] == "cc":
+                continue
+            from_file[key] = value
+
+        channels = (
+            {key[1] for key in from_file}
+            | {key[1] for key in self._sent_controllers}
+        )
+        from_file_keys = set(from_file)
+        for ch in sorted(channels):
+            desired = self._channel_baseline(ch)
+            for key, value in from_file.items():
+                if key[1] == ch:
+                    desired[key] = value
+            self._send_desired_channel_state(ch, desired, from_file_keys)
+
+    def _send_desired_channel_state(
+        self,
+        channel: int,
+        desired: dict[tuple, int],
+        from_file_keys: set[tuple],
+    ) -> None:
+        """Diff *desired* against last-sent and emit filtered controller messages."""
+        bank_keys = [
+            ("cc", channel, CC_BANK_SELECT_MSB),
+            ("cc", channel, CC_BANK_SELECT_LSB),
+        ]
+        program_key = ("program", channel)
+
+        def needs_send(key: tuple) -> bool:
+            if key not in desired:
+                return False
+            sent = self._sent_controllers.get(key)
+            if sent is None:
+                # Never sent: only emit file values (assume hardware at baseline)
+                return key in from_file_keys
+            return sent != desired[key]
+
+        if any(needs_send(k) for k in bank_keys + [program_key]):
+            for key in bank_keys + [program_key]:
+                if key not in desired:
+                    continue
+                # Banks accompany a program establish even when only baseline
+                if key in bank_keys and (
+                    needs_send(program_key) or needs_send(key)
+                ):
+                    if self._sent_controllers.get(key) != desired[key]:
+                        self._send_chased_value(key, desired[key])
+                elif needs_send(key):
+                    self._send_chased_value(key, desired[key])
+
+        for key in sorted(k for k in desired if k[0] == "cc" and k[1] == channel):
+            if key not in bank_keys and needs_send(key):
+                self._send_chased_value(key, desired[key])
+
+        pitch_key = ("pitchwheel", channel)
+        if needs_send(pitch_key):
+            self._send_chased_value(pitch_key, desired[pitch_key])
+
+    def _message_for_chase_key(self, key: tuple, value: int) -> mido.Message:
+        kind = key[0]
+        channel = key[1]
+        if kind == "program":
+            return mido.Message(
+                MidoMessageType.PROGRAM_CHANGE, channel=channel, program=value
+            )
+        if kind == "pitchwheel":
+            return mido.Message(
+                MidoMessageType.PITCH_WHEEL, channel=channel, pitch=value
+            )
+        return mido.Message(
+            MidoMessageType.CONTROL_CHANGE,
+            channel=channel,
+            control=key[2],
+            value=value,
+        )
+
+    def _send_chased_value(self, key: tuple, value: int) -> None:
+        """Send one chased controller through the mute/suppress filter."""
+        msg = self._message_for_chase_key(key, value)
+        if not self._controller_allowed(msg):
+            return
+        self._send(msg)
+        self._sent_controllers[key] = value
+        if key[0] == "cc" and key[2] == CC_SUSTAIN:
+            if value >= SUSTAIN_ON_THRESHOLD:
+                # Chase does not attribute sustain to a track; mark channel as
+                # held by a synthetic owner so release_held_notes can clear it.
+                self._sustained_channels.setdefault(key[1], set()).add(-1)
             else:
-                msg = mido.Message(
-                    MidoMessageType.CONTROL_CHANGE,
-                    channel=channel,
-                    control=kind[1],
-                    value=default,
-                )
-            self._send(msg)
-            self._sent_controllers[key] = default
-            if kind == ("cc", CC_SUSTAIN):
-                self._sustained_channels.pop(channel, None)
+                self._sustained_channels.pop(key[1], None)
+
+    def _controller_allowed(self, msg: mido.Message) -> bool:
+        channel = getattr(msg, "channel", None)
+        if channel is not None and channel in self._muted_channels:
+            return False
+        if self.suppress_program_changes and msg.type == "program_change":
+            return False
+        if self.suppress_control_changes and msg.type == "control_change":
+            return False
+        return True
 
     # --- Sending --------------------------------------------------------------
 
     def _dispatch(self, event: ScheduledEvent) -> None:
         if not self._should_send(event):
             return
+        msg = event.message
+        is_note_release = msg.type == MidoMessageType.NOTE_OFF or (
+            msg.type == MidoMessageType.NOTE_ON and msg.velocity == 0
+        )
+        is_sustain_off = (
+            msg.type == MidoMessageType.CONTROL_CHANGE
+            and msg.control == CC_SUSTAIN
+            and msg.value < SUSTAIN_ON_THRESHOLD
+        )
         self._track_sounding(event)
-        key = self._chase_key(event.message)
+        key = self._chase_key(msg)
         if key is not None:
-            self._sent_controllers[key] = self._chase_value(event.message)
-        if self.on_event:
-            self.on_event(self._scaled(event))
+            self._sent_controllers[key] = self._chase_value(msg)
 
-    def _scaled(self, event: ScheduledEvent) -> mido.Message:
+        # Shared-channel: suppress device note-off / sustain-off while another
+        # track still owns that sounding state.
+        if is_note_release:
+            note_key = (msg.channel, msg.note)
+            if note_key in self._held_notes:
+                return
+        if is_sustain_off and msg.channel in self._sustained_channels:
+            return
+
+        if self.on_event:
+            scaled = self._scaled(event)
+            if scaled is not None:
+                self.on_event(scaled)
+
+    def _scaled(self, event: ScheduledEvent) -> Optional[mido.Message]:
         """The event's message with the track's velocity scale applied."""
         msg = event.message
         scale = self._velocity_scales.get(event.track_index)
         if scale is None or msg.type != "note_on" or msg.velocity == 0:
-            return msg
+            return msg.copy() if msg.type == "note_on" and msg.velocity > 0 else msg
+        if scale == 0.0:
+            return None
         # At least 1: velocity 0 would be a note-off
         return msg.copy(velocity=max(1, min(127, round(msg.velocity * scale))))
 
     def _track_sounding(self, event: ScheduledEvent) -> None:
         """Remember which notes and sustain pedals are down so they can be released."""
         msg = event.message
-        key = (getattr(msg, MidoMessageAttrs.CHANNEL, None), getattr(msg, MidoMessageAttrs.NOTE, None))
+        key = (
+            getattr(msg, MidoMessageAttrs.CHANNEL, None),
+            getattr(msg, MidoMessageAttrs.NOTE, None),
+        )
+        track = event.track_index
         if msg.type == MidoMessageType.NOTE_ON and msg.velocity > 0:
-            self._held_notes.setdefault(key, set()).add(event.track_index)
+            counts = self._held_notes.setdefault(key, {})
+            counts[track] = counts.get(track, 0) + 1
         elif msg.type in (MidoMessageType.NOTE_OFF, MidoMessageType.NOTE_ON):
-            tracks = self._held_notes.get(key)
-            if tracks is not None:
-                tracks.discard(event.track_index)
-                if not tracks:
+            counts = self._held_notes.get(key)
+            if counts is not None and track in counts:
+                counts[track] -= 1
+                if counts[track] <= 0:
+                    del counts[track]
+                if not counts:
                     del self._held_notes[key]
         elif msg.type == MidoMessageType.CONTROL_CHANGE and msg.control == CC_SUSTAIN:
             if msg.value >= SUSTAIN_ON_THRESHOLD:
-                self._sustained_channels[msg.channel] = event.track_index
+                self._sustained_channels.setdefault(msg.channel, set()).add(track)
             else:
-                self._sustained_channels.pop(msg.channel, None)
+                owners = self._sustained_channels.get(msg.channel)
+                if owners is not None:
+                    owners.discard(track)
+                    if not owners:
+                        del self._sustained_channels[msg.channel]
 
     def _send(self, msg: mido.Message) -> None:
         if self.on_event:
@@ -786,7 +982,10 @@ class PlaybackEngine:
         self, channel: Optional[int] = None, track_index: Optional[int] = None
     ) -> None:
         """
-        Send note-off (and sustain-off) for what the name has sounded.
+        Send note-off (and sustain-off) for what the engine has sounded.
+
+        Device messages are only sent when effective channel state becomes
+        silent (no remaining track still owns the note or sustain).
 
         :param channel: Only release notes on this channel (0-15)
         :param track_index: Only release notes sounded by this track
@@ -798,18 +997,25 @@ class PlaybackEngine:
             )
 
         for (ch, note), tracks in list(self._held_notes.items()):
-            released = {track for track in tracks if matches(ch, track)}
+            released = [track for track in list(tracks) if matches(ch, track)]
             if not released:
                 continue
-            self._send(mido.Message(MidoMessageType.NOTE_OFF, channel=ch, note=note, velocity=0))
-            tracks -= released
+            for track in released:
+                del tracks[track]
             if not tracks:
+                self._send(
+                    mido.Message(
+                        MidoMessageType.NOTE_OFF, channel=ch, note=note, velocity=0
+                    )
+                )
                 del self._held_notes[(ch, note)]
-        for ch, track in list(self._sustained_channels.items()):
-            if matches(ch, track):
-                control = CC_SUSTAIN
-                value = 0
-                self._send(mido_send_channel_cc(ch, control, value))
+        for ch, owners in list(self._sustained_channels.items()):
+            released = {track for track in owners if matches(ch, track)}
+            if not released:
+                continue
+            owners -= released
+            if not owners:
+                self._send(mido_send_channel_cc(ch, CC_SUSTAIN, 0))
                 del self._sustained_channels[ch]
                 self._sent_controllers[("cc", ch, CC_SUSTAIN)] = 0
 
@@ -868,6 +1074,7 @@ class PlaybackEngine:
         Scale a track's note-on velocities by *scale* (1.0 = as in the file).
 
         Applies to notes sent from now on; sounding notes keep their velocity.
+        A scale of 0.0 suppresses note-ons entirely.
         """
         if scale == 1.0:
             self._velocity_scales.pop(track_index, None)
