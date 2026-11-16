@@ -127,6 +127,7 @@ class PlaybackEngine:
     the engine keeps logical per-track ownership and only sends a device
     note-off / sustain-off when no track still owns that state. Independent
     track mute cannot fully isolate parts that share channel and pitch.
+    Remapping multiple tracks onto one output channel inherits the same limit.
 
     The engine is not thread-safe; an owner driving it from another thread
     must serialise calls (e.g. with a lock).
@@ -179,6 +180,12 @@ class PlaybackEngine:
         self._muted_channels: set[int] = set()
         # track_index -> note-on velocity factor (absent = 1.0)
         self._velocity_scales: dict[int, float] = {}
+        # track_index -> overall note-on level 0.0–1.0 (absent = 1.0)
+        self._track_volumes: dict[int, float] = {}
+        # track_index -> semitone offset (absent = 0)
+        self._track_transposes: dict[int, int] = {}
+        # track_index -> output MIDI channel 0–15 (absent = file channel)
+        self._track_channel_maps: dict[int, int] = {}
 
         # (channel, note) -> {track_index: outstanding note-on count}
         self._held_notes: dict[tuple[int, int], dict[int, int]] = {}
@@ -706,15 +713,26 @@ class PlaybackEngine:
             self._recompute_clock_deadline()
 
     def _wrap_loop(self, overshoot: float) -> None:
-        """Jump from the loop end back to the loop start."""
-        end = self._loop_end_seconds()
+        """Jump from the loop end back to the loop start.
+
+        A long scheduler stall may cross several loop boundaries; fold whole
+        loop lengths out of *overshoot* so the remaining offset is within one
+        loop and elapsed time is not discarded.
+        """
         start_tick = self.loop_range[0] if self.loop_range else 0
+        end_tick = self.loop_range[1] if self.loop_range else self.length_ticks
+        loop_start_sec = self._tick_to_seconds(start_tick)
+        loop_end_sec = self._tick_to_seconds(end_tick)
+        loop_dur = loop_end_sec - loop_start_sec
+        if loop_dur > 0:
+            while overshoot >= loop_dur:
+                overshoot -= loop_dur
+        else:
+            overshoot = 0.0
         self.release_held_notes()
         if self.send_clock:
             self._send(mido.Message("stop"))
         self._position_at_tick(start_tick)
-        if end is None or overshoot > end - self._start_seconds:
-            overshoot = 0.0
         self._start_time = self._now() - overshoot / self.speed
         self._chase()
         if self.send_clock:
@@ -760,6 +778,13 @@ class PlaybackEngine:
     def _default_key(kind: tuple, channel: int) -> tuple:
         return (kind[0], channel, *kind[1:])
 
+    def _remap_chase_key(self, key: tuple, track_index: int) -> tuple:
+        """Rewrite a chase key's channel when the track is remapped."""
+        mapped = self._track_channel_maps.get(track_index)
+        if mapped is None:
+            return key
+        return (key[0], mapped, *key[2:])
+
     def _channel_baseline(self, channel: int) -> dict[tuple, int]:
         return {
             self._default_key(kind, channel): default
@@ -789,19 +814,19 @@ class PlaybackEngine:
     def _chase(self) -> None:
         """Send the controller state in effect at the position (changes only)."""
         raw = self._controller_state_before(self.event_index)
-        # Mute/suppress-aware desired values from file events
+        # Mute/suppress-aware desired values from file events (channel after remap)
         from_file: dict[tuple, int] = {}
         for key, (value, track_index) in raw.items():
-            channel = key[1]
             if track_index in self._muted_tracks:
-                continue
-            if channel in self._muted_channels:
                 continue
             if self.suppress_program_changes and key[0] == "program":
                 continue
             if self.suppress_control_changes and key[0] == "cc":
                 continue
-            from_file[key] = value
+            out_key = self._remap_chase_key(key, track_index)
+            if out_key[1] in self._muted_channels:
+                continue
+            from_file[out_key] = value
 
         channels = (
             {key[1] for key in from_file}
@@ -904,9 +929,24 @@ class PlaybackEngine:
     # --- Sending --------------------------------------------------------------
 
     def _dispatch(self, event: ScheduledEvent) -> None:
-        if not self._should_send(event):
+        if not self._should_send_track_and_suppress(event):
             return
-        msg = event.message
+        prepared = self._prepare_output(event)
+        if prepared is None:
+            return
+        msg, send_msg = prepared
+        out_channel = getattr(msg, "channel", None)
+        if out_channel is not None and out_channel in self._muted_channels:
+            return
+
+        # Silenced note-ons (scale/volume 0) are not tracked or sent.
+        if (
+            send_msg is None
+            and msg.type == MidoMessageType.NOTE_ON
+            and msg.velocity > 0
+        ):
+            return
+
         is_note_release = msg.type == MidoMessageType.NOTE_OFF or (
             msg.type == MidoMessageType.NOTE_ON and msg.velocity == 0
         )
@@ -915,7 +955,8 @@ class PlaybackEngine:
             and msg.control == CC_SUSTAIN
             and msg.value < SUSTAIN_ON_THRESHOLD
         )
-        self._track_sounding(event)
+        sounding = ScheduledEvent(event.absolute_tick, msg, event.track_index)
+        self._track_sounding(sounding)
         key = self._chase_key(msg)
         if key is not None:
             self._sent_controllers[key] = self._chase_value(msg)
@@ -929,21 +970,61 @@ class PlaybackEngine:
         if is_sustain_off and msg.channel in self._sustained_channels:
             return
 
-        if self.on_event:
-            scaled = self._scaled(event)
-            if scaled is not None:
-                self.on_event(scaled)
+        if self.on_event and send_msg is not None:
+            self.on_event(send_msg)
 
-    def _scaled(self, event: ScheduledEvent) -> Optional[mido.Message]:
-        """The event's message with the track's velocity scale applied."""
-        msg = event.message
-        scale = self._velocity_scales.get(event.track_index)
-        if scale is None or msg.type != "note_on" or msg.velocity == 0:
-            return msg.copy() if msg.type == "note_on" and msg.velocity > 0 else msg
-        if scale == 0.0:
+    def _prepare_output(
+        self, event: ScheduledEvent
+    ) -> Optional[tuple[mido.Message, Optional[mido.Message]]]:
+        """
+        Apply channel remap, transpose, velocity scale and track volume.
+
+        :return: (message used for state/chase, message to send) or None when
+            a transposed note is out of range. The send message is None when a
+            note-on is silenced by scale/volume 0 (state is still tracked).
+        """
+        msg = self._apply_arrange(event)
+        if msg is None:
             return None
-        # At least 1: velocity 0 would be a note-off
-        return msg.copy(velocity=max(1, min(127, round(msg.velocity * scale))))
+        send_msg = self._apply_velocity_and_volume(event.track_index, msg)
+        return msg, send_msg
+
+    def _apply_arrange(self, event: ScheduledEvent) -> Optional[mido.Message]:
+        """Channel remap and transpose; None if the sounding note is out of 0–127."""
+        msg = event.message
+        track = event.track_index
+        changes: dict[str, int] = {}
+        mapped = self._track_channel_maps.get(track)
+        if mapped is not None and hasattr(msg, "channel"):
+            changes["channel"] = mapped
+        transpose = self._track_transposes.get(track, 0)
+        if transpose and msg.type in (
+            MidoMessageType.NOTE_ON,
+            MidoMessageType.NOTE_OFF,
+            "polytouch",
+        ):
+            new_note = msg.note + transpose
+            if new_note < 0 or new_note > 127:
+                return None
+            changes["note"] = new_note
+        if not changes:
+            return msg
+        return msg.copy(**changes)
+
+    def _apply_velocity_and_volume(
+        self, track_index: int, msg: mido.Message
+    ) -> Optional[mido.Message]:
+        """Scale note-on velocity; return None to suppress a silenced note-on."""
+        if msg.type != "note_on" or msg.velocity == 0:
+            return msg
+        scale = self._velocity_scales.get(track_index, 1.0)
+        volume = self._track_volumes.get(track_index, 1.0)
+        if scale == 0.0 or volume == 0.0:
+            return None
+        factor = scale * volume
+        if factor == 1.0:
+            return msg.copy()
+        return msg.copy(velocity=max(1, min(127, round(msg.velocity * factor))))
 
     def _track_sounding(self, event: ScheduledEvent) -> None:
         """Remember which notes and sustain pedals are down so they can be released."""
@@ -1029,14 +1110,11 @@ class PlaybackEngine:
             control = CC_ALL_NOTES_OFF
             self._send(mido_send_channel_cc(ch, control, midi_value))
 
-    def _should_send(self, event: ScheduledEvent) -> bool:
+    def _should_send_track_and_suppress(self, event: ScheduledEvent) -> bool:
+        """Track mute and program/CC suppression (channel mute uses output channel)."""
         msg = event.message
 
         if event.track_index in self._muted_tracks:
-            return False
-
-        channel = getattr(msg, "channel", None)
-        if channel is not None and channel in self._muted_channels:
             return False
 
         if self.suppress_program_changes and msg.type == "program_change":
@@ -1080,6 +1158,46 @@ class PlaybackEngine:
             self._velocity_scales.pop(track_index, None)
         else:
             self._velocity_scales[track_index] = max(0.0, float(scale))
+
+    def set_track_volume(self, track_index: int, volume: float) -> None:
+        """
+        Set a track's overall note-on level (0.0–1.0; 1.0 = as scaled).
+
+        Stacks with :meth:`set_track_velocity_scale`. Does not inject CC7.
+        A volume of 0.0 suppresses note-ons.
+        """
+        volume = max(0.0, min(1.0, float(volume)))
+        if volume == 1.0:
+            self._track_volumes.pop(track_index, None)
+        else:
+            self._track_volumes[track_index] = volume
+
+    def set_track_transpose(self, track_index: int, semitones: int) -> None:
+        """
+        Transpose a track's notes by *semitones* (0 clears).
+
+        Out-of-range notes after transpose are suppressed. Held-note tracking
+        uses the sounding pitch.
+        """
+        semitones = int(semitones)
+        if semitones == 0:
+            self._track_transposes.pop(track_index, None)
+        else:
+            self._track_transposes[track_index] = semitones
+
+    def set_track_channel_map(
+        self, track_index: int, channel: Optional[int]
+    ) -> None:
+        """
+        Remap a track to output MIDI *channel* (0–15), or None for the file channel.
+
+        Channel mute follows the output channel. Remapping tracks onto one
+        channel shares that channel's note/sustain ownership.
+        """
+        if channel is None:
+            self._track_channel_maps.pop(track_index, None)
+            return
+        self._track_channel_maps[track_index] = max(0, min(15, int(channel)))
 
     def _restore_unmuted(self) -> None:
         """
