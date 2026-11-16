@@ -255,8 +255,9 @@ class ControllerSnapshot:
     """Controller state at a point in the event list (for fast chase)."""
 
     event_index: int
-    # chase key -> (value, track_index that last set it)
-    state: tuple[tuple[tuple, int, int], ...]
+    # Per-track history: (track_index, chase_key, value, event_index)
+    # chase_key is e.g. ("cc", channel, control) or ("program", channel).
+    state: tuple[tuple[int, tuple, int, int], ...]
     # channel -> frozen ParamEntryState payload
     param_entries: tuple[tuple[int, tuple], ...] = ()
 
@@ -301,10 +302,14 @@ class PlaybackEngine:
       does), so it plays with the program, volume and bend it would have had.
     - set_track_velocity_scale() scales a track's note-on velocities as they
       are sent (the file is not changed). A scale of 0.0 suppresses note-ons.
-    - Starting or seeking mid-file restores ("chases") program/bank, controller
-      and pitch-bend values from earlier in the file, sending only values that
-      differ from what the engine last sent. Missing values use a per-channel
-      baseline (defaults), so backwards seeks do not leave stale synth state.
+    - Starting (including tick 0) and seeking restore ("chase") program/bank,
+      controller and pitch-bend values from earlier in the file, sending only
+      values that differ from what was successfully delivered. Missing values
+      use a per-channel baseline (defaults). Stop does not clear the
+      last-delivered cache: the synthesizer still holds that state.
+    - Controller history is kept per track so mute/remap can resolve the
+      effective output-channel state from the latest eligible track (file order:
+      absolute tick, then track index). Same-tick precedence follows that order.
     - Optional: loop (whole file or A–B), playback speed, MIDI clock out.
 
     Shared-channel limitation: MIDI note-off and sustain are channel-wide.
@@ -313,6 +318,10 @@ class PlaybackEngine:
     note-off / sustain-off when no track still owns that state. Independent
     track mute cannot fully isolate parts that share channel and pitch.
     Remapping multiple tracks onto one output channel inherits the same limit.
+
+    RPN/NRPN: known RPN defaults (e.g. pitch-bend sensitivity) are restored on
+    seek-back; arbitrary NRPN values cannot be reversed without device-specific
+    knowledge and are left as last delivered when the file has no earlier value.
 
     The engine is not thread-safe; an owner driving it from another thread
     must serialise calls (e.g. with a lock).
@@ -376,10 +385,14 @@ class PlaybackEngine:
         self._held_notes: dict[tuple[int, int], dict[int, int]] = {}
         # channel -> tracks that currently have sustain >= 64
         self._sustained_channels: dict[int, set[int]] = {}
-        # Last value sent for each chased key, e.g. ("program", ch) -> 5
+        # Last value successfully delivered for each chased key
         self._sent_controllers: dict[tuple, int] = {}
-        # Last RPN/NRPN parameter state sent per output channel
+        # Last RPN/NRPN parameter state delivered per output channel
         self._sent_param_entries: dict[int, ParamEntryState] = {}
+        # False after load until a chase/emit establishes device agreement
+        self._output_known = False
+        # Channels that must be baseline-established after a file replace
+        self._channels_needing_establish: set[int] = set()
         self._chase_pending = False
 
         self.suppress_program_changes = False
@@ -427,6 +440,15 @@ class PlaybackEngine:
                 "use Type 0 or Type 1"
             )
         self.release_held_notes()
+        # New file: delivery relative to this intent is unknown until chase.
+        # Remember channels we had delivered so baselines can be re-established.
+        self._channels_needing_establish = (
+            {key[1] for key in self._sent_controllers}
+            | set(self._sent_param_entries)
+        )
+        self._sent_controllers.clear()
+        self._sent_param_entries.clear()
+        self._output_known = False
         self.midi_file = midi_file
         self.ticks_per_beat = midi_file.ticks_per_beat
 
@@ -437,9 +459,16 @@ class PlaybackEngine:
         self._event_seconds = [self._tick_to_seconds(t) for t in self._event_ticks]
         self.loop_range = None
         self.reset()
+        if self.on_event is not None:
+            self._chase()
+            self._output_known = True
 
     def reset(self) -> None:
-        """Reset playback state (position, play flag). Mute/suppress settings are unchanged."""
+        """Reset playback state (position, play flag). Mute/suppress settings are unchanged.
+
+        Last-delivered controller caches are kept; :meth:`load_file` clears them
+        when replacing the file so the next chase can re-establish honestly.
+        """
         self.release_held_notes()
         self.event_index = 0
         self.start_tick = 0
@@ -448,8 +477,6 @@ class PlaybackEngine:
         self._position_seconds = 0.0
         self._held_notes.clear()
         self._sustained_channels.clear()
-        self._sent_controllers.clear()
-        self._sent_param_entries.clear()
         self._chase_pending = False
         self._clock_position_dirty = False
         self._set_state(TransportState.STOPPED)
@@ -506,7 +533,8 @@ class PlaybackEngine:
             # Track length includes trailing meta events such as end_of_track
             self.length_ticks = max(self.length_ticks, absolute_tick)
 
-        self.events.sort(key=lambda e: e.absolute_tick)
+        # Same-tick order: track index (stable within a track preserves sequence).
+        self.events.sort(key=lambda e: (e.absolute_tick, e.track_index))
 
         # cache ticks for binary search
         self._event_ticks = [e.absolute_tick for e in self.events]
@@ -515,17 +543,24 @@ class PlaybackEngine:
         """Periodic chase-state snapshots for O(log N + K) seeking."""
         self._controller_snapshots = []
         self._snapshot_indexes = []
-        state: dict[tuple, tuple[int, int]] = {}
+        # (track_index, chase_key) -> (value, event_index)
+        state: dict[tuple[int, tuple], tuple[int, int]] = {}
         param_by_ch: dict[int, ParamEntryState] = {}
         for i, event in enumerate(self.events):
             key = self._chase_key(event.message)
             if key is not None:
-                state[key] = (self._chase_value(event.message), event.track_index)
+                state[(event.track_index, key)] = (
+                    self._chase_value(event.message),
+                    i,
+                )
             self._apply_param_event(param_by_ch, event)
             if (i + 1) % CONTROLLER_SNAPSHOT_INTERVAL == 0:
                 snap = ControllerSnapshot(
                     event_index=i + 1,
-                    state=tuple((k, v, t) for k, (v, t) in state.items()),
+                    state=tuple(
+                        (track, key, value, event_index)
+                        for (track, key), (value, event_index) in state.items()
+                    ),
                     param_entries=tuple(
                         (ch, param_by_ch[ch].freeze())
                         for ch in sorted(param_by_ch)
@@ -637,22 +672,28 @@ class PlaybackEngine:
     # --- Transport ------------------------------------------------------------
 
     def start(self, start_tick: int = 0) -> None:
+        """Begin or resume playback from *start_tick* (clamped to length).
+
+        Always chases desired controller state (baseline ∪ file), including
+        when *start_tick* is 0.
+        """
         if self._is_playing:
             self.release_held_notes()
+        start_tick = max(0, min(int(start_tick), self.length_ticks))
         self._position_at_tick(start_tick)
         self._start_time = self._now()
         self._set_state(TransportState.PLAYING)
-        if start_tick > 0:
-            self._chase()
+        self._chase()
         self._chase_pending = False
+        self._output_known = True
         if self.send_clock:
             if start_tick > 0:
                 self._send_song_position()
-                self._send(mido.Message("continue"))
+                self._emit(mido.Message("continue"))
             else:
                 self._next_clock_tick = 0.0
                 self._recompute_clock_deadline()
-                self._send(mido.Message("start"))
+                self._emit(mido.Message("start"))
         self._clock_position_dirty = False
 
     def _find_start_index(self, start_tick: int) -> int:
@@ -666,20 +707,28 @@ class PlaybackEngine:
         self._position_seconds = self._start_seconds
 
     def stop(self) -> None:
-        """Stop playback; the position is kept (seek_tick(0) rewinds)."""
+        """Stop playback; the position is kept (seek_tick(0) rewinds).
+
+        Last-delivered controller caches are kept so the next chase can
+        diff honestly against synthesizer state.
+        """
         was_running = self._is_playing
         if was_running:
             self._hold_position()
         self._set_state(TransportState.STOPPED)
         self.release_held_notes()
-        # A later play re-establishes controller state from scratch
-        self._sent_controllers.clear()
-        self._sent_param_entries.clear()
         if was_running and self.send_clock:
-            self._send(mido.Message("stop"))
+            self._emit(mido.Message("stop"))
 
     def pause(self) -> None:
-        """Pause playback; position is preserved and sounding notes are released."""
+        """Pause playback; position is preserved and sounding notes are released.
+
+        Events due at the pause instant are dispatched before the position
+        is frozen so they are not deferred until resume.
+        """
+        if not self._is_playing:
+            return
+        self.process_until_now()
         if not self._is_playing:
             return
         self._hold_position()
@@ -689,7 +738,7 @@ class PlaybackEngine:
         # re-striking notes that were sounding at the pause point.
         self._chase_pending = True
         if self.send_clock:
-            self._send(mido.Message("stop"))
+            self._emit(mido.Message("stop"))
 
     def _hold_position(self) -> None:
         """Freeze the running position; start_tick then names the stopped position."""
@@ -863,10 +912,8 @@ class PlaybackEngine:
             self.start_tick = self.length_ticks
             self._set_state(TransportState.STOPPED)
             self.release_held_notes()
-            self._sent_controllers.clear()
-            self._sent_param_entries.clear()
             if self.send_clock:
-                self._send(mido.Message("stop"))
+                self._emit(mido.Message("stop"))
             return True
         return False
 
@@ -1029,17 +1076,21 @@ class PlaybackEngine:
 
     def _controller_state_before(
         self, event_index: int
-    ) -> tuple[dict[tuple, tuple[int, int]], dict[int, ParamEntryState]]:
+    ) -> tuple[dict[tuple[int, tuple], tuple[int, int]], dict[int, ParamEntryState]]:
         """
-        Last controller value and RPN/NRPN state before *event_index*.
+        Per-track controller history and RPN/NRPN state before *event_index*.
 
+        History maps ``(track_index, chase_key) -> (value, event_index)``.
         Uses periodic snapshots then replays the short tail.
         """
         idx = bisect.bisect_right(self._snapshot_indexes, event_index) - 1
         if idx >= 0:
             snap = self._controller_snapshots[idx]
             start = snap.event_index
-            state = {key: (value, track) for key, value, track in snap.state}
+            state = {
+                (track, key): (value, ev_i)
+                for track, key, value, ev_i in snap.state
+            }
             param_by_ch = {
                 ch: ParamEntryState.thaw(payload)
                 for ch, payload in snap.param_entries
@@ -1048,29 +1099,44 @@ class PlaybackEngine:
             start = 0
             state = {}
             param_by_ch = {}
-        for event in self.events[start:event_index]:
+        for i, event in enumerate(self.events[start:event_index], start=start):
             key = self._chase_key(event.message)
             if key is not None:
-                state[key] = (self._chase_value(event.message), event.track_index)
+                state[(event.track_index, key)] = (
+                    self._chase_value(event.message),
+                    i,
+                )
             self._apply_param_event(param_by_ch, event)
         return state, param_by_ch
 
-    def _chase(self) -> None:
-        """Send the controller state in effect at the position (changes only)."""
-        raw, param_by_ch = self._controller_state_before(self.event_index)
-        # Mute/suppress-aware desired values from file events (channel after remap)
-        from_file: dict[tuple, int] = {}
-        for key, (value, track_index) in raw.items():
+    def _resolve_from_file(
+        self, history: dict[tuple[int, tuple], tuple[int, int]]
+    ) -> dict[tuple, int]:
+        """
+        Resolve per-track history to effective output-channel controller values.
+
+        Among unmuted tracks, apply remapping, then take the last event in file
+        order (merged list: absolute tick, then track index) per output key.
+        """
+        # out_key -> (event_index, value)
+        best: dict[tuple, tuple[int, int]] = {}
+        for (track_index, key), (value, event_index) in history.items():
             if track_index in self._muted_tracks:
                 continue
-            if self.suppress_program_changes and key[0] == "program":
-                continue
-            if self.suppress_control_changes and key[0] == "cc":
+            if self._suppressed_kind(key[0], key[2] if key[0] == "cc" else None):
                 continue
             out_key = self._remap_chase_key(key, track_index)
             if out_key[1] in self._muted_channels:
                 continue
-            from_file[out_key] = value
+            prev = best.get(out_key)
+            if prev is None or event_index >= prev[0]:
+                best[out_key] = (event_index, value)
+        return {key: value for key, (_, value) in best.items()}
+
+    def _chase(self) -> None:
+        """Send the controller state in effect at the position (changes only)."""
+        history, param_by_ch = self._controller_state_before(self.event_index)
+        from_file = self._resolve_from_file(history)
 
         desired_params = self._remap_param_entries(param_by_ch)
         channels = (
@@ -1078,6 +1144,7 @@ class PlaybackEngine:
             | {key[1] for key in self._sent_controllers}
             | set(desired_params)
             | set(self._sent_param_entries)
+            | set(self._channels_needing_establish)
         )
         from_file_keys = set(from_file)
         for ch in sorted(channels):
@@ -1088,6 +1155,8 @@ class PlaybackEngine:
             self._send_desired_channel_state(ch, desired, from_file_keys)
             if not self.suppress_control_changes and ch not in self._muted_channels:
                 self._chase_param_entry(ch, desired_params.get(ch))
+        self._channels_needing_establish.clear()
+        self._output_known = True
 
     def _remap_param_entries(
         self, param_by_ch: dict[int, ParamEntryState]
@@ -1190,7 +1259,8 @@ class PlaybackEngine:
             msg = mido_send_channel_cc(channel, control, value)
             if not self._controller_allowed(msg):
                 return False
-            self._send(msg)
+            if not self._emit(msg):
+                return False
         slot = self._sent_param_entries.setdefault(channel, ParamEntryState())
         if kind == "rpn":
             slot.rpn_values[key] = data
@@ -1211,7 +1281,8 @@ class PlaybackEngine:
             msg = mido_send_channel_cc(channel, control, value)
             if not self._controller_allowed(msg):
                 return
-            self._send(msg)
+            if not self._emit(msg):
+                return
         slot = self._sent_param_entries.setdefault(channel, ParamEntryState())
         slot.rpn_msb = PARAM_NULL
         slot.rpn_lsb = PARAM_NULL
@@ -1235,8 +1306,13 @@ class PlaybackEngine:
                 return False
             sent = self._sent_controllers.get(key)
             if sent is None:
-                # Never sent: only emit file values (assume hardware at baseline)
-                return key in from_file_keys
+                # Cold start: only file values (assume hardware at baseline).
+                # After load_file replaced a previously delivered channel,
+                # re-establish the full desired baseline ∪ file for that channel.
+                return (
+                    key in from_file_keys
+                    or key[1] in self._channels_needing_establish
+                )
             return sent != desired[key]
 
         if any(needs_send(k) for k in bank_keys + [program_key]):
@@ -1283,7 +1359,8 @@ class PlaybackEngine:
         msg = self._message_for_chase_key(key, value)
         if not self._controller_allowed(msg):
             return
-        self._send(msg)
+        if not self._emit(msg):
+            return
         self._sent_controllers[key] = value
         if key[0] == "cc" and key[2] == CC_SUSTAIN:
             if value >= SUSTAIN_ON_THRESHOLD:
@@ -1297,13 +1374,55 @@ class PlaybackEngine:
         channel = getattr(msg, "channel", None)
         if channel is not None and channel in self._muted_channels:
             return False
-        if self.suppress_program_changes and msg.type == "program_change":
-            return False
-        if self.suppress_control_changes and msg.type == "control_change":
-            return False
-        return True
+        return not self._suppressed(msg)
+
+    def _suppressed_kind(self, kind: str, control: Optional[int] = None) -> bool:
+        """
+        Whether program/CC suppression drops a message of *kind*.
+
+        Bank Select (CC 0 / CC 32) only qualifies the program change that
+        follows it, so it follows ``suppress_program_changes``, not
+        ``suppress_control_changes``: otherwise suppressing CCs would send
+        program changes without their bank, selecting the right program
+        number in the wrong bank.
+
+        :param kind: "program", "cc" or a mido message type
+        :param control: CC number for control changes
+        :return: bool True if the message must not be sent
+        """
+        if kind in ("program", "program_change"):
+            return self.suppress_program_changes
+        if kind in ("cc", "control_change"):
+            if control in (CC_BANK_SELECT_MSB, CC_BANK_SELECT_LSB):
+                return self.suppress_program_changes
+            return self.suppress_control_changes
+        return False
+
+    def _suppressed(self, msg: mido.Message) -> bool:
+        """
+        Whether program/CC suppression drops *msg* (see :meth:`_suppressed_kind`).
+
+        :param msg: mido.Message
+        :return: bool
+        """
+        return self._suppressed_kind(msg.type, getattr(msg, "control", None))
 
     # --- Sending --------------------------------------------------------------
+
+    def _emit(self, msg: mido.Message) -> bool:
+        """
+        Deliver *msg* via ``on_event``.
+
+        Always copies before the callback. Returns True only on successful
+        delivery; callers must not commit sent/held delivered state otherwise.
+        """
+        if self.on_event is None:
+            return False
+        try:
+            self.on_event(msg.copy())
+        except Exception:
+            return False
+        return True
 
     def _dispatch(self, event: ScheduledEvent) -> None:
         if not self._should_send_track_and_suppress(event):
@@ -1333,6 +1452,58 @@ class PlaybackEngine:
             and msg.value < SUSTAIN_ON_THRESHOLD
         )
         sounding = ScheduledEvent(event.absolute_tick, msg, event.track_index)
+
+        # Shared-channel: suppress device note-off / sustain-off while another
+        # track would still own that sounding state after this event.
+        if is_note_release:
+            note_key = (msg.channel, msg.note)
+            counts = self._held_notes.get(note_key)
+            if counts and event.track_index in counts:
+                would_remain = dict(counts)
+                would_remain[event.track_index] -= 1
+                if would_remain[event.track_index] <= 0:
+                    del would_remain[event.track_index]
+                if would_remain:
+                    self._track_sounding(sounding)
+                    return
+                if send_msg is not None and not self._emit(send_msg):
+                    return
+                self._track_sounding(sounding)
+                return
+            # Never owned (e.g. silenced note-on, mid-file start, pause release):
+            # forward the file note-off for device/file fidelity, unless another
+            # track is sounding this channel/pitch: note-off is channel-wide and
+            # would cut that track's note while it is still counted as held.
+            if send_msg is not None and not counts:
+                self._emit(send_msg)
+            return
+
+        if is_sustain_off:
+            owners = self._sustained_channels.get(msg.channel)
+            if owners and event.track_index in owners:
+                would_remain = owners - {event.track_index}
+                if would_remain:
+                    self._track_sounding(sounding)
+                    return
+                if send_msg is not None and not self._emit(send_msg):
+                    return
+                self._track_sounding(sounding)
+                key = self._chase_key(msg)
+                if key is not None:
+                    self._sent_controllers[key] = self._chase_value(msg)
+                return
+            # Not an owner: a sustain-off would release another track's pedal
+            if owners:
+                return
+            if send_msg is not None and self._emit(send_msg):
+                key = self._chase_key(msg)
+                if key is not None:
+                    self._sent_controllers[key] = self._chase_value(msg)
+            return
+
+        if send_msg is not None and not self._emit(send_msg):
+            return
+
         self._track_sounding(sounding)
         key = self._chase_key(msg)
         if key is not None:
@@ -1345,18 +1516,6 @@ class PlaybackEngine:
                 msg.channel, ParamEntryState()
             )
             slot.apply(msg.control, msg.value, event.track_index)
-
-        # Shared-channel: suppress device note-off / sustain-off while another
-        # track still owns that sounding state.
-        if is_note_release:
-            note_key = (msg.channel, msg.note)
-            if note_key in self._held_notes:
-                return
-        if is_sustain_off and msg.channel in self._sustained_channels:
-            return
-
-        if self.on_event and send_msg is not None:
-            self.on_event(send_msg)
 
     def _prepare_output(
         self, event: ScheduledEvent
@@ -1441,8 +1600,8 @@ class PlaybackEngine:
                         del self._sustained_channels[msg.channel]
 
     def _send(self, msg: mido.Message) -> None:
-        if self.on_event:
-            self.on_event(msg)
+        """Legacy alias for clock/seek paths; prefer :meth:`_emit`."""
+        self._emit(msg)
 
     def release_held_notes(
         self, channel: Optional[int] = None, track_index: Optional[int] = None
@@ -1451,7 +1610,8 @@ class PlaybackEngine:
         Send note-off (and sustain-off) for what the engine has sounded.
 
         Device messages are only sent when effective channel state becomes
-        silent (no remaining track still owns the note or sustain).
+        silent (no remaining track still owns the note or sustain). Delivered
+        state is updated only after a successful emit.
 
         :param channel: Only release notes on this channel (0-15)
         :param track_index: Only release notes sounded by this track
@@ -1466,24 +1626,29 @@ class PlaybackEngine:
             released = [track for track in list(tracks) if matches(ch, track)]
             if not released:
                 continue
-            for track in released:
-                del tracks[track]
-            if not tracks:
-                self._send(
-                    mido.Message(
-                        MidoMessageType.NOTE_OFF, channel=ch, note=note, velocity=0
-                    )
+            remaining = {t: c for t, c in tracks.items() if t not in released}
+            if remaining:
+                self._held_notes[(ch, note)] = remaining
+                continue
+            if not self._emit(
+                mido.Message(
+                    MidoMessageType.NOTE_OFF, channel=ch, note=note, velocity=0
                 )
-                del self._held_notes[(ch, note)]
+            ):
+                continue
+            del self._held_notes[(ch, note)]
         for ch, owners in list(self._sustained_channels.items()):
             released = {track for track in owners if matches(ch, track)}
             if not released:
                 continue
-            owners -= released
-            if not owners:
-                self._send(mido_send_channel_cc(ch, CC_SUSTAIN, 0))
-                del self._sustained_channels[ch]
-                self._sent_controllers[("cc", ch, CC_SUSTAIN)] = 0
+            remaining = owners - released
+            if remaining:
+                self._sustained_channels[ch] = remaining
+                continue
+            if not self._emit(mido_send_channel_cc(ch, CC_SUSTAIN, 0)):
+                continue
+            del self._sustained_channels[ch]
+            self._sent_controllers[("cc", ch, CC_SUSTAIN)] = 0
 
     def all_notes_off(self) -> None:
         """Panic: release tracked notes, then All Sound Off / All Notes Off on all channels."""
@@ -1491,9 +1656,9 @@ class PlaybackEngine:
         for ch in range(Channel.TOTAL_CHANNELS):
             control = CC_ALL_SOUND_OFF
             midi_value = 0
-            self._send(mido_send_channel_cc(ch, control, midi_value))
+            self._emit(mido_send_channel_cc(ch, control, midi_value))
             control = CC_ALL_NOTES_OFF
-            self._send(mido_send_channel_cc(ch, control, midi_value))
+            self._emit(mido_send_channel_cc(ch, control, midi_value))
 
     def _should_send_track_and_suppress(self, event: ScheduledEvent) -> bool:
         """Track mute and program/CC suppression (channel mute uses output channel)."""
@@ -1502,13 +1667,7 @@ class PlaybackEngine:
         if event.track_index in self._muted_tracks:
             return False
 
-        if self.suppress_program_changes and msg.type == "program_change":
-            return False
-
-        if self.suppress_control_changes and msg.type == "control_change":
-            return False
-
-        return True
+        return not self._suppressed(msg)
 
     def mute_channel(self, channel: int, muted: bool) -> None:
         """Mute or unmute a channel (0-15); calls that change nothing do nothing."""
@@ -1522,7 +1681,11 @@ class PlaybackEngine:
             self._restore_unmuted()
 
     def mute_track(self, track_index: int, muted: bool) -> None:
-        """Mute or unmute a track; calls that change nothing do nothing."""
+        """Mute or unmute a track; calls that change nothing do nothing.
+
+        Both mute and unmute re-resolve effective controllers so a muted
+        track's last CC cannot strand another track on a shared channel.
+        """
         if muted == (track_index in self._muted_tracks):
             return
         if muted:
@@ -1530,28 +1693,35 @@ class PlaybackEngine:
             self.release_held_notes(track_index=track_index)
         else:
             self._muted_tracks.discard(track_index)
-            self._restore_unmuted()
+        self._restore_unmuted()
 
     def set_track_velocity_scale(self, track_index: int, scale: float) -> None:
         """
         Scale a track's note-on velocities by *scale* (1.0 = as in the file).
 
-        Applies to notes sent from now on; sounding notes keep their velocity.
-        A scale of 0.0 suppresses note-ons entirely.
+        Applies to notes sent from now on. A scale of 0.0 suppresses note-ons
+        and releases sounding notes on the track first.
         """
-        if scale == 1.0:
+        new_scale = 1.0 if scale == 1.0 else max(0.0, float(scale))
+        old = self._velocity_scales.get(track_index, 1.0)
+        if new_scale == 0.0 or old == 0.0:
+            self.release_held_notes(track_index=track_index)
+        if new_scale == 1.0:
             self._velocity_scales.pop(track_index, None)
         else:
-            self._velocity_scales[track_index] = max(0.0, float(scale))
+            self._velocity_scales[track_index] = new_scale
 
     def set_track_volume(self, track_index: int, volume: float) -> None:
         """
         Set a track's overall note-on level (0.0–1.0; 1.0 = as scaled).
 
         Stacks with :meth:`set_track_velocity_scale`. Does not inject CC7.
-        A volume of 0.0 suppresses note-ons.
+        A volume of 0.0 suppresses note-ons and releases sounding notes first.
         """
         volume = max(0.0, min(1.0, float(volume)))
+        old = self._track_volumes.get(track_index, 1.0)
+        if volume == 0.0 or old == 0.0:
+            self.release_held_notes(track_index=track_index)
         if volume == 1.0:
             self._track_volumes.pop(track_index, None)
         else:
@@ -1561,14 +1731,18 @@ class PlaybackEngine:
         """
         Transpose a track's notes by *semitones* (0 clears).
 
+        Releases sounding notes on the track before applying the change.
         Out-of-range notes after transpose are suppressed. Held-note tracking
         uses the sounding pitch.
         """
+        self.release_held_notes(track_index=track_index)
         semitones = int(semitones)
         if semitones == 0:
             self._track_transposes.pop(track_index, None)
         else:
             self._track_transposes[track_index] = semitones
+        if self._is_playing:
+            self._chase()
 
     def set_track_channel_map(
         self, track_index: int, channel: Optional[int]
@@ -1576,20 +1750,24 @@ class PlaybackEngine:
         """
         Remap a track to output MIDI *channel* (0–15), or None for the file channel.
 
+        Releases sounding notes on the track first; re-chases if playing.
         Channel mute follows the output channel. Remapping tracks onto one
         channel shares that channel's note/sustain ownership.
         """
+        self.release_held_notes(track_index=track_index)
         if channel is None:
             self._track_channel_maps.pop(track_index, None)
-            return
-        self._track_channel_maps[track_index] = max(0, min(15, int(channel)))
+        else:
+            self._track_channel_maps[track_index] = max(0, min(15, int(channel)))
+        if self._is_playing:
+            self._chase()
 
     def _restore_unmuted(self) -> None:
         """
-        Send the controller state the unmuted events left (program, CCs, bend).
+        Re-resolve and chase effective controller state after mute changes.
 
-        Muted events were not sent, so the synth still has what the other
-        tracks (or nothing) set; chasing sends only what differs.
+        Mute and unmute both call this so a muted track's last CC cannot
+        leave a shared output channel stranded.
         """
         if self._is_playing:
             self._chase()
