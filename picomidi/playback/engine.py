@@ -12,7 +12,7 @@ ScheduledEvent(absolute_tick=344, message=Message('note_on', channel=0, note=0, 
 import bisect
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Callable, List, Optional
 
@@ -24,17 +24,43 @@ from picomidi.message.type import MidoMessageType, MidoMessageAttrs
 
 CC_BANK_SELECT_MSB = 0
 CC_MODULATION = 1
+CC_DATA_ENTRY_MSB = 6
 CC_VOLUME = 7
 CC_PAN = 10
 CC_EXPRESSION = 11
 CC_BANK_SELECT_LSB = 32
+CC_DATA_ENTRY_LSB = 38
 CC_SUSTAIN = 64
+CC_DATA_INCREMENT = 96
+CC_DATA_DECREMENT = 97
+CC_NRPN_LSB = 98
+CC_NRPN_MSB = 99
+CC_RPN_LSB = 100
+CC_RPN_MSB = 101
 CC_ALL_SOUND_OFF = 120
 CC_ALL_NOTES_OFF = 123
 SUSTAIN_ON_THRESHOLD = 64
+# Null RPN/NRPN selection (no parameter)
+PARAM_NULL = 127
+# GM default pitch-bend sensitivity: 2 semitones (RPN 0,0)
+RPN_PITCH_BEND_SENSITIVITY = (0, 0)
+RPN_DEFAULTS: dict[tuple[int, int], tuple[int, int]] = {
+    RPN_PITCH_BEND_SENSITIVITY: (2, 0),
+}
 
-# Not restored on seek: RPN/NRPN data entry is order-dependent, 120+ are channel mode messages
-UNCHASED_CONTROLS = frozenset({6, 38, 96, 97, 98, 99, 100, 101})
+# Handled by ParamEntryState (order-dependent); 120+ are channel mode messages
+UNCHASED_CONTROLS = frozenset(
+    {
+        CC_DATA_ENTRY_MSB,
+        CC_DATA_ENTRY_LSB,
+        CC_DATA_INCREMENT,
+        CC_DATA_DECREMENT,
+        CC_NRPN_LSB,
+        CC_NRPN_MSB,
+        CC_RPN_LSB,
+        CC_RPN_MSB,
+    }
+)
 FIRST_CHANNEL_MODE_CONTROL = 120
 # Baseline per channel when the file has no earlier value (GM-ish defaults)
 CHASE_DEFAULTS = {
@@ -67,6 +93,163 @@ class ScheduledEvent:
     track_index: int = 0
 
 
+@dataclass
+class ParamEntryState:
+    """
+    Per-channel RPN/NRPN selection and registered parameter values.
+
+    Data Entry / Inc / Dec apply to the currently selected RPN or NRPN.
+    Chase restores each known parameter as an ordered CC sequence
+    (select MSB/LSB, then Data Entry MSB/LSB).
+    """
+
+    rpn_msb: int = PARAM_NULL
+    rpn_lsb: int = PARAM_NULL
+    nrpn_msb: int = PARAM_NULL
+    nrpn_lsb: int = PARAM_NULL
+    active: Optional[str] = None  # "rpn", "nrpn", or None
+    # (msb, lsb) -> (data_msb, data_lsb)
+    rpn_values: dict[tuple[int, int], tuple[int, int]] = field(default_factory=dict)
+    nrpn_values: dict[tuple[int, int], tuple[int, int]] = field(default_factory=dict)
+    # track that last touched this channel's param-entry state (for mute filter)
+    last_track: int = 0
+    # track that last set each parameter value
+    rpn_tracks: dict[tuple[int, int], int] = field(default_factory=dict)
+    nrpn_tracks: dict[tuple[int, int], int] = field(default_factory=dict)
+
+    def copy(self) -> "ParamEntryState":
+        return ParamEntryState(
+            rpn_msb=self.rpn_msb,
+            rpn_lsb=self.rpn_lsb,
+            nrpn_msb=self.nrpn_msb,
+            nrpn_lsb=self.nrpn_lsb,
+            active=self.active,
+            rpn_values=dict(self.rpn_values),
+            nrpn_values=dict(self.nrpn_values),
+            last_track=self.last_track,
+            rpn_tracks=dict(self.rpn_tracks),
+            nrpn_tracks=dict(self.nrpn_tracks),
+        )
+
+    def apply(self, control: int, value: int, track_index: int) -> None:
+        """Update selection or data from one CC."""
+        self.last_track = track_index
+        if control == CC_RPN_MSB:
+            self.rpn_msb = value
+            self.active = "rpn"
+        elif control == CC_RPN_LSB:
+            self.rpn_lsb = value
+            self.active = "rpn"
+        elif control == CC_NRPN_MSB:
+            self.nrpn_msb = value
+            self.active = "nrpn"
+        elif control == CC_NRPN_LSB:
+            self.nrpn_lsb = value
+            self.active = "nrpn"
+        elif control == CC_DATA_ENTRY_MSB:
+            self._write_data(data_msb=value, track_index=track_index)
+        elif control == CC_DATA_ENTRY_LSB:
+            self._write_data(data_lsb=value, track_index=track_index)
+        elif control == CC_DATA_INCREMENT:
+            self._nudge(1, track_index)
+        elif control == CC_DATA_DECREMENT:
+            self._nudge(-1, track_index)
+
+    def _selected_key(self) -> Optional[tuple[str, tuple[int, int]]]:
+        if self.active == "rpn":
+            key = (self.rpn_msb, self.rpn_lsb)
+            if key == (PARAM_NULL, PARAM_NULL):
+                return None
+            return "rpn", key
+        if self.active == "nrpn":
+            key = (self.nrpn_msb, self.nrpn_lsb)
+            if key == (PARAM_NULL, PARAM_NULL):
+                return None
+            return "nrpn", key
+        return None
+
+    def _write_data(
+        self,
+        track_index: int,
+        data_msb: Optional[int] = None,
+        data_lsb: Optional[int] = None,
+    ) -> None:
+        selected = self._selected_key()
+        if selected is None:
+            return
+        kind, key = selected
+        store = self.rpn_values if kind == "rpn" else self.nrpn_values
+        tracks = self.rpn_tracks if kind == "rpn" else self.nrpn_tracks
+        cur_msb, cur_lsb = store.get(key, (0, 0))
+        if data_msb is not None:
+            cur_msb = data_msb
+        if data_lsb is not None:
+            cur_lsb = data_lsb
+        store[key] = (cur_msb, cur_lsb)
+        tracks[key] = track_index
+
+    def _nudge(self, delta: int, track_index: int) -> None:
+        selected = self._selected_key()
+        if selected is None:
+            return
+        kind, key = selected
+        store = self.rpn_values if kind == "rpn" else self.nrpn_values
+        tracks = self.rpn_tracks if kind == "rpn" else self.nrpn_tracks
+        msb, lsb = store.get(key, (0, 0))
+        value = max(0, min(16383, (msb << 7) | lsb) + delta)
+        store[key] = (value >> 7, value & 0x7F)
+        tracks[key] = track_index
+
+    def freeze(self) -> tuple:
+        """Immutable snapshot payload for ControllerSnapshot."""
+        return (
+            self.rpn_msb,
+            self.rpn_lsb,
+            self.nrpn_msb,
+            self.nrpn_lsb,
+            self.active,
+            self.last_track,
+            tuple(
+                (k[0], k[1], v[0], v[1], self.rpn_tracks.get(k, self.last_track))
+                for k, v in sorted(self.rpn_values.items())
+            ),
+            tuple(
+                (k[0], k[1], v[0], v[1], self.nrpn_tracks.get(k, self.last_track))
+                for k, v in sorted(self.nrpn_values.items())
+            ),
+        )
+
+    @classmethod
+    def thaw(cls, payload: tuple) -> "ParamEntryState":
+        (
+            rpn_msb,
+            rpn_lsb,
+            nrpn_msb,
+            nrpn_lsb,
+            active,
+            last_track,
+            rpn_rows,
+            nrpn_rows,
+        ) = payload
+        state = cls(
+            rpn_msb=rpn_msb,
+            rpn_lsb=rpn_lsb,
+            nrpn_msb=nrpn_msb,
+            nrpn_lsb=nrpn_lsb,
+            active=active,
+            last_track=last_track,
+        )
+        for msb, lsb, d_msb, d_lsb, track in rpn_rows:
+            key = (msb, lsb)
+            state.rpn_values[key] = (d_msb, d_lsb)
+            state.rpn_tracks[key] = track
+        for msb, lsb, d_msb, d_lsb, track in nrpn_rows:
+            key = (msb, lsb)
+            state.nrpn_values[key] = (d_msb, d_lsb)
+            state.nrpn_tracks[key] = track
+        return state
+
+
 @dataclass(frozen=True)
 class ControllerSnapshot:
     """Controller state at a point in the event list (for fast chase)."""
@@ -74,6 +257,8 @@ class ControllerSnapshot:
     event_index: int
     # chase key -> (value, track_index that last set it)
     state: tuple[tuple[tuple, int, int], ...]
+    # channel -> frozen ParamEntryState payload
+    param_entries: tuple[tuple[int, tuple], ...] = ()
 
 
 class TransportState(Enum):
@@ -193,6 +378,8 @@ class PlaybackEngine:
         self._sustained_channels: dict[int, set[int]] = {}
         # Last value sent for each chased key, e.g. ("program", ch) -> 5
         self._sent_controllers: dict[tuple, int] = {}
+        # Last RPN/NRPN parameter state sent per output channel
+        self._sent_param_entries: dict[int, ParamEntryState] = {}
         self._chase_pending = False
 
         self.suppress_program_changes = False
@@ -262,6 +449,7 @@ class PlaybackEngine:
         self._held_notes.clear()
         self._sustained_channels.clear()
         self._sent_controllers.clear()
+        self._sent_param_entries.clear()
         self._chase_pending = False
         self._clock_position_dirty = False
         self._set_state(TransportState.STOPPED)
@@ -328,17 +516,36 @@ class PlaybackEngine:
         self._controller_snapshots = []
         self._snapshot_indexes = []
         state: dict[tuple, tuple[int, int]] = {}
+        param_by_ch: dict[int, ParamEntryState] = {}
         for i, event in enumerate(self.events):
             key = self._chase_key(event.message)
             if key is not None:
                 state[key] = (self._chase_value(event.message), event.track_index)
+            self._apply_param_event(param_by_ch, event)
             if (i + 1) % CONTROLLER_SNAPSHOT_INTERVAL == 0:
                 snap = ControllerSnapshot(
                     event_index=i + 1,
                     state=tuple((k, v, t) for k, (v, t) in state.items()),
+                    param_entries=tuple(
+                        (ch, param_by_ch[ch].freeze())
+                        for ch in sorted(param_by_ch)
+                    ),
                 )
                 self._controller_snapshots.append(snap)
                 self._snapshot_indexes.append(snap.event_index)
+
+    @staticmethod
+    def _apply_param_event(
+        param_by_ch: dict[int, ParamEntryState], event: ScheduledEvent
+    ) -> None:
+        """Update per-channel RPN/NRPN state from one scheduled event."""
+        msg = event.message
+        if msg.type != MidoMessageType.CONTROL_CHANGE:
+            return
+        if msg.control not in UNCHASED_CONTROLS:
+            return
+        state = param_by_ch.setdefault(msg.channel, ParamEntryState())
+        state.apply(msg.control, msg.value, event.track_index)
 
     # --- Position -------------------------------------------------------------
 
@@ -467,6 +674,7 @@ class PlaybackEngine:
         self.release_held_notes()
         # A later play re-establishes controller state from scratch
         self._sent_controllers.clear()
+        self._sent_param_entries.clear()
         if was_running and self.send_clock:
             self._send(mido.Message("stop"))
 
@@ -656,10 +864,38 @@ class PlaybackEngine:
             self._set_state(TransportState.STOPPED)
             self.release_held_notes()
             self._sent_controllers.clear()
+            self._sent_param_entries.clear()
             if self.send_clock:
                 self._send(mido.Message("stop"))
             return True
         return False
+
+    def wall_seconds_until_next_due(self) -> float:
+        """
+        Wall-clock seconds until the next event, MIDI clock, or loop boundary.
+
+        Returns ``0.0`` if something is already due or overdue. Returns
+        ``math.inf`` when not playing so a scheduler can block on a wake event
+        instead of polling.
+        """
+        if not self._is_playing:
+            return math.inf
+        position = self._running_position()
+        due_times: List[float] = []
+        if self.event_index < len(self._event_seconds):
+            due_times.append(self._event_seconds[self.event_index])
+        else:
+            due_times.append(self.duration_seconds)
+        clock = self._next_clock_deadline()
+        if clock != math.inf:
+            due_times.append(clock)
+        loop_end = self._loop_end_seconds()
+        if loop_end is not None:
+            due_times.append(loop_end)
+        delay_file = min(due_times) - position
+        if delay_file <= 0:
+            return 0.0
+        return delay_file / max(self.speed, 1e-9)
 
     def _send_due(self, position: float, limit: Optional[float]) -> None:
         """Send events and clock due at *position*, in time order, before *limit*."""
@@ -791,9 +1027,11 @@ class PlaybackEngine:
             for kind, default in CHASE_DEFAULTS.items()
         }
 
-    def _controller_state_before(self, event_index: int) -> dict[tuple, tuple[int, int]]:
+    def _controller_state_before(
+        self, event_index: int
+    ) -> tuple[dict[tuple, tuple[int, int]], dict[int, ParamEntryState]]:
         """
-        Last controller value and source track for each key before *event_index*.
+        Last controller value and RPN/NRPN state before *event_index*.
 
         Uses periodic snapshots then replays the short tail.
         """
@@ -802,18 +1040,24 @@ class PlaybackEngine:
             snap = self._controller_snapshots[idx]
             start = snap.event_index
             state = {key: (value, track) for key, value, track in snap.state}
+            param_by_ch = {
+                ch: ParamEntryState.thaw(payload)
+                for ch, payload in snap.param_entries
+            }
         else:
             start = 0
             state = {}
+            param_by_ch = {}
         for event in self.events[start:event_index]:
             key = self._chase_key(event.message)
             if key is not None:
                 state[key] = (self._chase_value(event.message), event.track_index)
-        return state
+            self._apply_param_event(param_by_ch, event)
+        return state, param_by_ch
 
     def _chase(self) -> None:
         """Send the controller state in effect at the position (changes only)."""
-        raw = self._controller_state_before(self.event_index)
+        raw, param_by_ch = self._controller_state_before(self.event_index)
         # Mute/suppress-aware desired values from file events (channel after remap)
         from_file: dict[tuple, int] = {}
         for key, (value, track_index) in raw.items():
@@ -828,9 +1072,12 @@ class PlaybackEngine:
                 continue
             from_file[out_key] = value
 
+        desired_params = self._remap_param_entries(param_by_ch)
         channels = (
             {key[1] for key in from_file}
             | {key[1] for key in self._sent_controllers}
+            | set(desired_params)
+            | set(self._sent_param_entries)
         )
         from_file_keys = set(from_file)
         for ch in sorted(channels):
@@ -839,6 +1086,136 @@ class PlaybackEngine:
                 if key[1] == ch:
                     desired[key] = value
             self._send_desired_channel_state(ch, desired, from_file_keys)
+            if not self.suppress_control_changes and ch not in self._muted_channels:
+                self._chase_param_entry(ch, desired_params.get(ch))
+
+    def _remap_param_entries(
+        self, param_by_ch: dict[int, ParamEntryState]
+    ) -> dict[int, ParamEntryState]:
+        """Apply track mute and channel remap to file RPN/NRPN state."""
+        out: dict[int, ParamEntryState] = {}
+        for file_ch, state in param_by_ch.items():
+            for key, value in state.rpn_values.items():
+                track = state.rpn_tracks.get(key, state.last_track)
+                if track in self._muted_tracks:
+                    continue
+                out_ch = self._track_channel_maps.get(track, file_ch)
+                slot = out.setdefault(out_ch, ParamEntryState())
+                slot.rpn_values[key] = value
+                slot.rpn_tracks[key] = track
+                slot.last_track = track
+            for key, value in state.nrpn_values.items():
+                track = state.nrpn_tracks.get(key, state.last_track)
+                if track in self._muted_tracks:
+                    continue
+                out_ch = self._track_channel_maps.get(track, file_ch)
+                slot = out.setdefault(out_ch, ParamEntryState())
+                slot.nrpn_values[key] = value
+                slot.nrpn_tracks[key] = track
+                slot.last_track = track
+            if state.last_track not in self._muted_tracks and state.active:
+                out_ch = self._track_channel_maps.get(state.last_track, file_ch)
+                slot = out.setdefault(out_ch, ParamEntryState())
+                slot.rpn_msb = state.rpn_msb
+                slot.rpn_lsb = state.rpn_lsb
+                slot.nrpn_msb = state.nrpn_msb
+                slot.nrpn_lsb = state.nrpn_lsb
+                slot.active = state.active
+                slot.last_track = state.last_track
+        return out
+
+    def _chase_param_entry(
+        self, channel: int, desired: Optional[ParamEntryState]
+    ) -> None:
+        """Emit ordered RPN/NRPN sequences so the device matches *desired*."""
+        desired = (desired or ParamEntryState()).copy()
+        sent = self._sent_param_entries.get(channel) or ParamEntryState()
+        # Include GM defaults for known RPNs when the file never set them but
+        # we previously sent a non-default (backwards seek).
+        for key, default in RPN_DEFAULTS.items():
+            if key not in desired.rpn_values:
+                if sent.rpn_values.get(key) not in (None, default):
+                    desired.rpn_values[key] = default
+
+        # Restore each RPN that differs
+        for key in sorted(set(desired.rpn_values) | set(sent.rpn_values)):
+            want = desired.rpn_values.get(key)
+            have = sent.rpn_values.get(key)
+            if want is None:
+                want = RPN_DEFAULTS.get(key)
+            if want is None or want == have:
+                continue
+            if not self._send_param_sequence(channel, "rpn", key, want):
+                return
+        for key in sorted(set(desired.nrpn_values) | set(sent.nrpn_values)):
+            want = desired.nrpn_values.get(key)
+            have = sent.nrpn_values.get(key)
+            if want is None or want == have:
+                continue
+            if not self._send_param_sequence(channel, "nrpn", key, want):
+                return
+
+        # Leave selection null after chase so later live Data Entry is safe
+        if (
+            desired.rpn_values
+            or desired.nrpn_values
+            or sent.rpn_values
+            or sent.nrpn_values
+        ):
+            self._send_param_null(channel)
+
+    def _send_param_sequence(
+        self,
+        channel: int,
+        kind: str,
+        key: tuple[int, int],
+        data: tuple[int, int],
+    ) -> bool:
+        """
+        Send select + data-entry for one RPN/NRPN.
+
+        :return: False if a message was blocked by mute/suppress
+        """
+        msb_cc = CC_RPN_MSB if kind == "rpn" else CC_NRPN_MSB
+        lsb_cc = CC_RPN_LSB if kind == "rpn" else CC_NRPN_LSB
+        param_msb, param_lsb = key
+        data_msb, data_lsb = data
+        sequence = [
+            (msb_cc, param_msb),
+            (lsb_cc, param_lsb),
+            (CC_DATA_ENTRY_MSB, data_msb),
+            (CC_DATA_ENTRY_LSB, data_lsb),
+        ]
+        for control, value in sequence:
+            msg = mido_send_channel_cc(channel, control, value)
+            if not self._controller_allowed(msg):
+                return False
+            self._send(msg)
+        slot = self._sent_param_entries.setdefault(channel, ParamEntryState())
+        if kind == "rpn":
+            slot.rpn_values[key] = data
+            slot.active = "rpn"
+            slot.rpn_msb, slot.rpn_lsb = key
+        else:
+            slot.nrpn_values[key] = data
+            slot.active = "nrpn"
+            slot.nrpn_msb, slot.nrpn_lsb = key
+        return True
+
+    def _send_param_null(self, channel: int) -> None:
+        """Select the null RPN so subsequent Data Entry is ignored by the device."""
+        for control, value in (
+            (CC_RPN_MSB, PARAM_NULL),
+            (CC_RPN_LSB, PARAM_NULL),
+        ):
+            msg = mido_send_channel_cc(channel, control, value)
+            if not self._controller_allowed(msg):
+                return
+            self._send(msg)
+        slot = self._sent_param_entries.setdefault(channel, ParamEntryState())
+        slot.rpn_msb = PARAM_NULL
+        slot.rpn_lsb = PARAM_NULL
+        slot.active = None
 
     def _send_desired_channel_state(
         self,
@@ -960,6 +1337,14 @@ class PlaybackEngine:
         key = self._chase_key(msg)
         if key is not None:
             self._sent_controllers[key] = self._chase_value(msg)
+        if (
+            msg.type == MidoMessageType.CONTROL_CHANGE
+            and msg.control in UNCHASED_CONTROLS
+        ):
+            slot = self._sent_param_entries.setdefault(
+                msg.channel, ParamEntryState()
+            )
+            slot.apply(msg.control, msg.value, event.track_index)
 
         # Shared-channel: suppress device note-off / sustain-off while another
         # track still owns that sounding state.
