@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "picomidi"
-version = "0.2.0"
+version = "0.3.0"
 description = "A lightweight, focused MIDI library for Python"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -60,7 +60,7 @@ target-version = ["py38", "py39", "py310", "py311", "py312"]
 include = '\.pyi?$'
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["picomidi/tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
